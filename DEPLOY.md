@@ -56,13 +56,10 @@ Wait ~1 minute for deployment.
 
 Your app will be live at:
 ```
-https://goalbet.vercel.app
+https://goalbet-rho.vercel.app
 ```
 
-Or with your username:
-```
-https://goalbet-YOUR_USERNAME.vercel.app
-```
+Or a custom URL assigned by Vercel.
 
 ## 🔄 Auto-Deploy Updates
 

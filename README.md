@@ -7,7 +7,7 @@
 
 A decentralized football betting platform built on **GenLayer** — the first blockchain with native AI inference. Bet GEN tokens on real football matches, and outcomes are resolved automatically by an AI Oracle that fetches live results from BBC Sport.
 
-[GoalBet Preview](https://via.placeholder.com/800x400/0f0d1a/6366f1?text=GoalBet+-+Football+Betting+dApp)
+![GoalBet Preview](https://via.placeholder.com/800x400/0f0d1a/6366f1?text=GoalBet+-+Football+Betting+dApp)
 
 ## ✨ Features
 
@@ -23,7 +23,7 @@ A decentralized football betting platform built on **GenLayer** — the first bl
 
 | Resource | URL |
 |----------|-----|
-| 📱 **Live App** | [goalbet-rho.vercel.app/](https://goalbet-rho.vercel.app/) |
+| 📱 **Live App** | [goalbet-rho.vercel.app](https://goalbet-rho.vercel.app) |
 | 📜 **Contract** | [0xe7e1eD19Ebc2F37314EfA571e4b529527901ebb9](https://explorer-studio.genlayer.com/address/0xe7e1eD19Ebc2F37314EfA571e4b529527901ebb9) |
 | 💰 **Faucet** | [GenLayer Studio](https://studio.genlayer.com/contracts) |
 | 🌐 **GenLayer** | [genlayer.com](https://genlayer.com) |
@@ -95,7 +95,7 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ### Option 1: One-Click Deploy
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/YOUR_USERNAME/goalbet)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/user/goalbet)
 
 ### Option 2: Manual Deploy
 
