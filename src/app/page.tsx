@@ -375,8 +375,10 @@ export default function HomePage() {
       showNotification(`Bet ${stake} GEN placed on-chain! 🎯`, "success", txHash);
       setBetModal(null);
       setStakeAmount("10");
-      // Refresh balance and bets
-      await Promise.all([fetchBets(), fetchGenBalance()]);
+      // Refresh all data after bet
+      await Promise.all([fetchBets(), fetchGenBalance(), fetchLeaderboard(), fetchMyStats()]);
+      // Switch to My Bets tab so user sees the bet
+      setActiveTab("mybets");
     } catch (error: unknown) {
       const errMsg = (error as Error).message || "Transaction failed";
       if (errMsg.includes("already exists")) {

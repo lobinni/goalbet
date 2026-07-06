@@ -24,7 +24,7 @@ A decentralized football betting platform built on **GenLayer** — the first bl
 | Resource | URL |
 |----------|-----|
 | 📱 **Live App** | [goalbet-rho.vercel.app](https://goalbet-rho.vercel.app) |
-| 📜 **Contract** | [0xe7e1eD19Ebc2F37314EfA571e4b529527901ebb9](https://explorer-studio.genlayer.com/address/0xe7e1eD19Ebc2F37314EfA571e4b529527901ebb9) |
+| 📜 **Contract** | [0x60fcDCeF6C6881ADD3A9327eE7F7EFeBf50aEC71](https://explorer-studio.genlayer.com/address/0x60fcDCeF6C6881ADD3A9327eE7F7EFeBf50aEC71) |
 | 💰 **Faucet** | [GenLayer Studio](https://studio.genlayer.com/contracts) |
 | 🌐 **GenLayer** | [genlayer.com](https://genlayer.com) |
 

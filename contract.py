@@ -3,8 +3,8 @@
 """
 GoalBet - On-Chain Football Betting with GEN Tokens
 ====================================================
-Bet GEN on football matches. AI Oracle resolves results from BBC Sport.
-Leaderboard ranks players by total GEN winnings.
+Bet GEN on matches. AI Oracle resolves from BBC Sport.
+Ranked by total GEN winnings.
 """
 
 from dataclasses import dataclass
@@ -45,10 +45,9 @@ class PlayerStats:
 class GoalBet(gl.Contract):
     bets: TreeMap[str, Bet]
     stats: TreeMap[Address, PlayerStats]
-    total_pool: u256
 
     def __init__(self):
-        self.total_pool = u256(0)
+        pass
 
     def _bet_key(self, address: Address, bet_id: str) -> str:
         return address.as_hex + ":" + bet_id
@@ -104,15 +103,19 @@ Respond ONLY with the JSON object. No extra text, no markdown fences.
 
         return gl.vm.run_nondet_unsafe(leader_fn, validator_fn)
 
-    @gl.public.write
+    @gl.public.write.payable
     def create_bet(
-        self, game_date: str, team1: str, team2: str, predicted_winner: str, odds: int
+        self, game_date: str, team1: str, team2: str, predicted_winner: str, odds: str
     ) -> None:
         stake = gl.message.value
-        
+
         if stake < u256(1_000_000_000_000_000_000):
             raise gl.vm.UserError(f"{ERROR_EXPECTED} Minimum stake is 1 GEN")
-        
+
+        odds_int = int(odds)
+        if odds_int <= 100:
+            raise gl.vm.UserError(f"{ERROR_EXPECTED} Odds must be greater than 1.00x")
+
         resolution_url = "https://www.bbc.com/sport/football/scores-fixtures/" + game_date
         sender = gl.message.sender_address
         bet_id = f"{game_date}_{team1}_{team2}".lower().replace(" ", "-")
@@ -121,7 +124,7 @@ Respond ONLY with the JSON object. No extra text, no markdown fences.
         if key in self.bets:
             raise gl.vm.UserError(f"{ERROR_EXPECTED} Bet already exists for this match")
 
-        potential_payout = (stake * u256(odds)) // u256(100)
+        potential_payout = (stake * u256(odds_int)) // u256(100)
 
         bet = Bet(
             id=bet_id,
@@ -134,12 +137,11 @@ Respond ONLY with the JSON object. No extra text, no markdown fences.
             real_winner="",
             real_score="",
             stake=stake,
-            odds=u256(odds),
+            odds=u256(odds_int),
             payout=potential_payout,
             is_won=False,
         )
         self.bets[key] = bet
-        self.total_pool += stake
 
         player_stats = self._get_or_create_stats(sender)
         player_stats.total_bets += u256(1)
@@ -170,14 +172,7 @@ Respond ONLY with the JSON object. No extra text, no markdown fences.
 
         if bet.real_winner == bet.predicted_winner:
             bet.is_won = True
-            payout = bet.payout
-            
-            if payout > u256(0):
-                gl.transfer(sender, payout)
-                if self.total_pool >= payout:
-                    self.total_pool -= payout
-            
-            player_stats.total_won += payout
+            player_stats.total_won += bet.payout
             player_stats.wins += u256(1)
         else:
             bet.is_won = False
@@ -227,10 +222,8 @@ Respond ONLY with the JSON object. No extra text, no markdown fences.
                 total_won = int(s.total_won)
                 total_staked = int(s.total_staked)
                 total_lost = int(s.total_lost)
-                
-                # Calculate profit (won - lost)
                 profit = total_won - total_lost if total_won >= total_lost else -(total_lost - total_won)
-                
+
                 entries.append({
                     "address": addr.as_hex,
                     "total_won": total_won,
@@ -243,7 +236,3 @@ Respond ONLY with the JSON object. No extra text, no markdown fences.
                 })
         entries.sort(key=lambda x: x["total_won"], reverse=True)
         return entries
-
-    @gl.public.view
-    def get_total_pool(self) -> int:
-        return int(self.total_pool)
