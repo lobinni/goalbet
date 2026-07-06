@@ -244,35 +244,51 @@ export default function HomePage() {
 
   // ─── Data Fetching ──────────────────────────────────────────────
 
+  const [betsLoading, setBetsLoading] = useState(false);
+  const [leaderboardLoading, setLeaderboardLoading] = useState(false);
+  const [betsError, setBetsError] = useState<string | null>(null);
+  const [leaderboardError, setLeaderboardError] = useState<string | null>(null);
+
   const fetchBets = useCallback(async () => {
     if (!contract || !isCorrectNetwork) return;
+    setBetsLoading(true);
+    setBetsError(null);
     try {
       const bets = await contract.getBets();
+      console.log("[Page] Bets received:", bets);
       setMyBets(bets);
     } catch (error) {
-      console.error("Error fetching bets:", error);
+      console.error("[Page] Error fetching bets:", error);
+      setBetsError(String((error as Error).message || "Failed to load bets"));
     }
+    setBetsLoading(false);
   }, [contract, isCorrectNetwork]);
 
   const fetchLeaderboard = useCallback(async () => {
-    if (!contract) return;
+    if (!contract || !isCorrectNetwork) return;
+    setLeaderboardLoading(true);
+    setLeaderboardError(null);
     try {
       const entries = await contract.getLeaderboard();
+      console.log("[Page] Leaderboard received:", entries);
       setLeaderboard(entries);
     } catch (error) {
-      console.error("Error fetching leaderboard:", error);
+      console.error("[Page] Error fetching leaderboard:", error);
+      setLeaderboardError(String((error as Error).message || "Failed to load leaderboard"));
     }
-  }, [contract]);
+    setLeaderboardLoading(false);
+  }, [contract, isCorrectNetwork]);
 
   const fetchMyStats = useCallback(async () => {
-    if (!contract || !account) return;
+    if (!contract || !account || !isCorrectNetwork) return;
     try {
       const stats = await contract.getPlayerStats(account);
+      console.log("[Page] Stats received:", stats);
       setMyStats(stats);
     } catch (error) {
-      console.error("Error fetching stats:", error);
+      console.error("[Page] Error fetching stats:", error);
     }
-  }, [contract, account]);
+  }, [contract, account, isCorrectNetwork]);
 
   // Fetch GEN balance from wallet
   const fetchGenBalance = useCallback(async () => {
@@ -283,7 +299,6 @@ export default function HomePage() {
         method: "eth_getBalance",
         params: [account, "latest"],
       }) as string;
-      // Convert from wei to GEN (18 decimals)
       const balanceInGEN = parseInt(balance, 16) / 1e18;
       setGenBalance(balanceInGEN.toFixed(4));
     } catch (error) {
@@ -291,14 +306,26 @@ export default function HomePage() {
     }
   }, [account, isCorrectNetwork]);
 
+  // Initial data load
   useEffect(() => {
     if (contract && isCorrectNetwork) {
+      fetchGenBalance();
       fetchBets();
       fetchLeaderboard();
       fetchMyStats();
-      fetchGenBalance();
     }
-  }, [contract, isCorrectNetwork, fetchBets, fetchLeaderboard, fetchMyStats, fetchGenBalance]);
+  }, [contract, isCorrectNetwork, fetchGenBalance, fetchBets, fetchLeaderboard, fetchMyStats]);
+
+  // Refresh when tab changes
+  useEffect(() => {
+    if (!contract || !isCorrectNetwork) return;
+    if (activeTab === "mybets") {
+      fetchBets();
+      fetchMyStats();
+    } else if (activeTab === "leaderboard") {
+      fetchLeaderboard();
+    }
+  }, [activeTab, contract, isCorrectNetwork, fetchBets, fetchMyStats, fetchLeaderboard]);
 
   // Refresh balance periodically
   useEffect(() => {
@@ -778,7 +805,40 @@ export default function HomePage() {
         {/* ── MY BETS TAB ──────────────────────────────────── */}
         {activeTab === "mybets" && (
           <div className="animate-fade-in space-y-4">
-            {Object.keys(myBets).length === 0 ? (
+            {/* Refresh bar */}
+            <div className="flex items-center justify-between">
+              <p className="text-sm text-slate-400">
+                {Object.keys(myBets).length} bet{Object.keys(myBets).length !== 1 ? "s" : ""}
+              </p>
+              <button
+                onClick={fetchBets}
+                disabled={betsLoading}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium bg-surface-light hover:bg-surface-lighter border border-surface-lighter hover:border-primary/30 transition-all disabled:opacity-50"
+              >
+                {betsLoading ? (
+                  <><span className="w-3 h-3 border-2 border-primary/30 border-t-primary rounded-full animate-spin" /> Loading...</>
+                ) : "🔄 Refresh"}
+              </button>
+            </div>
+
+            {/* Error state */}
+            {betsError && (
+              <div className="bg-danger/10 border border-danger/30 rounded-xl p-4 text-center">
+                <p className="text-sm text-danger">{betsError}</p>
+                <button onClick={fetchBets} className="mt-2 text-xs text-primary underline">Try again</button>
+              </div>
+            )}
+
+            {/* Loading state */}
+            {betsLoading && Object.keys(myBets).length === 0 && !betsError && (
+              <div className="text-center py-20">
+                <div className="w-8 h-8 border-4 border-primary/30 border-t-primary rounded-full animate-spin mx-auto mb-4" />
+                <p className="text-slate-400">Loading your bets from blockchain...</p>
+              </div>
+            )}
+
+            {/* Empty state */}
+            {!betsLoading && !betsError && Object.keys(myBets).length === 0 ? (
               <div className="text-center py-20 text-slate-500">
                 <div className="text-4xl mb-4">🎯</div>
                 <p>No bets placed yet</p>
@@ -904,30 +964,59 @@ export default function HomePage() {
         {activeTab === "leaderboard" && (
           <div className="animate-fade-in">
             <div className="glass-card overflow-hidden">
-              <div className="p-5 border-b border-surface-lighter">
-                <h2 className="text-lg font-bold gradient-text">🏆 Top Winners</h2>
-                <p className="text-xs text-slate-400 mt-1">
-                  Ranked by total GEN won from correct predictions
-                </p>
+              <div className="p-5 border-b border-surface-lighter flex items-center justify-between">
+                <div>
+                  <h2 className="text-lg font-bold gradient-text">🏆 Top Winners</h2>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Ranked by total GEN won from correct predictions
+                  </p>
+                </div>
+                <button
+                  onClick={fetchLeaderboard}
+                  disabled={leaderboardLoading}
+                  className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium bg-surface-light hover:bg-surface-lighter border border-surface-lighter hover:border-primary/30 transition-all disabled:opacity-50"
+                >
+                  {leaderboardLoading ? (
+                    <><span className="w-3 h-3 border-2 border-primary/30 border-t-primary rounded-full animate-spin" /> Loading...</>
+                  ) : "🔄 Refresh"}
+                </button>
               </div>
+
+              {/* Error state */}
+              {leaderboardError && (
+                <div className="p-4 text-center">
+                  <p className="text-sm text-danger">{leaderboardError}</p>
+                  <button onClick={fetchLeaderboard} className="mt-2 text-xs text-primary underline">Try again</button>
+                </div>
+              )}
+
+              {/* Loading state */}
+              {leaderboardLoading && leaderboard.length === 0 && !leaderboardError && (
+                <div className="text-center py-16">
+                  <div className="w-8 h-8 border-4 border-primary/30 border-t-primary rounded-full animate-spin mx-auto mb-4" />
+                  <p className="text-slate-400">Loading leaderboard from blockchain...</p>
+                </div>
+              )}
 
               {/* Column Headers */}
-              <div className="grid grid-cols-12 gap-2 px-5 py-3 bg-surface-light/50 text-xs text-slate-500 font-medium">
-                <div className="col-span-1">#</div>
-                <div className="col-span-4">Player</div>
-                <div className="col-span-2 text-right">Won</div>
-                <div className="col-span-2 text-right">Staked</div>
-                <div className="col-span-2 text-right">Profit</div>
-                <div className="col-span-1 text-right">W/L</div>
-              </div>
+              {!leaderboardLoading && !leaderboardError && leaderboard.length > 0 && (
+                <div className="grid grid-cols-12 gap-2 px-5 py-3 bg-surface-light/50 text-xs text-slate-500 font-medium">
+                  <div className="col-span-1">#</div>
+                  <div className="col-span-4">Player</div>
+                  <div className="col-span-2 text-right">Won</div>
+                  <div className="col-span-2 text-right">Staked</div>
+                  <div className="col-span-2 text-right">Profit</div>
+                  <div className="col-span-1 text-right">W/L</div>
+                </div>
+              )}
 
-              {leaderboard.length === 0 ? (
+              {!leaderboardLoading && !leaderboardError && leaderboard.length === 0 ? (
                 <div className="text-center py-16 text-slate-500">
                   <div className="text-4xl mb-4">🏆</div>
-                  <p>No bets placed yet</p>
+                  <p>No bets resolved yet</p>
                   <p className="text-sm mt-1">Be the first to win!</p>
                 </div>
-              ) : (
+              ) : !leaderboardError && leaderboard.length > 0 ? (
                 <div className="divide-y divide-surface-lighter/50">
                   {leaderboard.map((entry, index) => {
                     const totalWonGEN = weiToGEN(entry.total_won);
@@ -1005,7 +1094,7 @@ export default function HomePage() {
                     );
                   })}
                 </div>
-              )}
+              ) : null}
             </div>
           </div>
         )}

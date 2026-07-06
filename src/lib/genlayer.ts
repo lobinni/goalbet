@@ -28,7 +28,6 @@ export const GENLAYER_NETWORK = {
 export const KNOWN_NETWORKS: Record<string, string> = {
   "0x1": "Ethereum Mainnet",
   "0xaa36a7": "Sepolia",
-  "0x5": "Goerli",
   "0x89": "Polygon",
   "0x38": "BNB Chain",
   "0xa4b1": "Arbitrum One",
@@ -72,23 +71,42 @@ export interface LeaderboardEntry {
   win_rate: number;
 }
 
-// Helper to convert Map to Object
-function mapToObject<T>(value: unknown): T {
+/**
+ * Recursively convert Map / dataclass instances into plain JS objects.
+ * genlayer-js returns Maps for TreeMap and dataclass-like objects for structs.
+ */
+function mapToObject(value: unknown): unknown {
+  if (value === null || value === undefined) return value;
+
+  // Map → plain object
   if (value instanceof Map) {
     const obj: Record<string, unknown> = {};
     for (const [k, v] of value.entries()) {
       obj[String(k)] = mapToObject(v);
     }
-    return obj as T;
+    return obj;
   }
-  if (value && typeof value === "object" && !Array.isArray(value)) {
+
+  // Array → recurse into each element
+  if (Array.isArray(value)) {
+    return value.map((item) => mapToObject(item));
+  }
+
+  // BigInt → number (for display; fine for wei values within JS safe range)
+  if (typeof value === "bigint") {
+    return value.toString();
+  }
+
+  // Plain object → recurse into each property
+  if (typeof value === "object") {
     const obj: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value)) {
       obj[k] = mapToObject(v);
     }
-    return obj as T;
+    return obj;
   }
-  return value as T;
+
+  return value;
 }
 
 // Convert wei to GEN
@@ -128,43 +146,127 @@ export class GoalBetContract {
 
   /** Get caller's bets */
   async getBets(): Promise<Record<string, Bet>> {
-    const bets = await this.client.readContract({
-      address: CONTRACT_ADDRESS,
-      functionName: "get_bets",
-      args: [],
-    });
-    return mapToObject<Record<string, Bet>>(bets);
+    try {
+      const raw = await this.client.readContract({
+        address: CONTRACT_ADDRESS,
+        functionName: "get_bets",
+        args: [],
+      });
+      const converted = mapToObject(raw);
+      console.log("[GoalBet] getBets raw:", raw, "converted:", converted);
+
+      // If it's already a plain object, return it
+      if (converted && typeof converted === "object" && !Array.isArray(converted)) {
+        return converted as Record<string, Bet>;
+      }
+      return {};
+    } catch (error) {
+      console.error("[GoalBet] getBets error:", error);
+      return {};
+    }
   }
 
   /** Get player stats */
   async getPlayerStats(address: string): Promise<PlayerStats> {
-    const stats = await this.client.readContract({
-      address: CONTRACT_ADDRESS,
-      functionName: "get_player_stats",
-      args: [address],
-    });
-    return mapToObject<PlayerStats>(stats);
+    const defaultStats: PlayerStats = {
+      total_bets: 0, total_staked: 0, total_won: 0,
+      total_lost: 0, wins: 0, losses: 0,
+    };
+    try {
+      const raw = await this.client.readContract({
+        address: CONTRACT_ADDRESS,
+        functionName: "get_player_stats",
+        args: [address],
+      });
+      const converted = mapToObject(raw);
+      console.log("[GoalBet] getPlayerStats raw:", raw, "converted:", converted);
+
+      if (converted && typeof converted === "object") {
+        const s = converted as Record<string, unknown>;
+        return {
+          total_bets: Number(s.total_bets ?? 0),
+          total_staked: Number(s.total_staked ?? 0),
+          total_won: Number(s.total_won ?? 0),
+          total_lost: Number(s.total_lost ?? 0),
+          wins: Number(s.wins ?? 0),
+          losses: Number(s.losses ?? 0),
+        };
+      }
+      return defaultStats;
+    } catch (error) {
+      console.error("[GoalBet] getPlayerStats error:", error);
+      return defaultStats;
+    }
   }
 
   /** Get leaderboard sorted by total GEN won */
   async getLeaderboard(): Promise<LeaderboardEntry[]> {
-    const leaderboard = await this.client.readContract({
-      address: CONTRACT_ADDRESS,
-      functionName: "get_leaderboard",
-      args: [],
-    });
-    const entries = mapToObject<LeaderboardEntry[]>(leaderboard);
-    return Array.isArray(entries) ? entries : [];
+    try {
+      const raw = await this.client.readContract({
+        address: CONTRACT_ADDRESS,
+        functionName: "get_leaderboard",
+        args: [],
+      });
+      const converted = mapToObject(raw);
+      console.log("[GoalBet] getLeaderboard raw:", raw, "converted:", converted);
+
+      // Contract returns a list of dicts
+      if (Array.isArray(converted)) {
+        return converted.map((entry: unknown) => {
+          const e = entry as Record<string, unknown>;
+          return {
+            address: String(e.address ?? ""),
+            total_won: Number(e.total_won ?? 0),
+            total_staked: Number(e.total_staked ?? 0),
+            total_lost: Number(e.total_lost ?? 0),
+            profit: Number(e.profit ?? 0),
+            wins: Number(e.wins ?? 0),
+            losses: Number(e.losses ?? 0),
+            win_rate: Number(e.win_rate ?? 0),
+          };
+        });
+      }
+
+      // Might come back as Map or object – try to extract values
+      if (converted && typeof converted === "object") {
+        const values = Object.values(converted as Record<string, unknown>);
+        if (values.length > 0) {
+          return values.map((entry: unknown) => {
+            const e = entry as Record<string, unknown>;
+            return {
+              address: String(e.address ?? ""),
+              total_won: Number(e.total_won ?? 0),
+              total_staked: Number(e.total_staked ?? 0),
+              total_lost: Number(e.total_lost ?? 0),
+              profit: Number(e.profit ?? 0),
+              wins: Number(e.wins ?? 0),
+              losses: Number(e.losses ?? 0),
+              win_rate: Number(e.win_rate ?? 0),
+            };
+          });
+        }
+      }
+
+      return [];
+    } catch (error) {
+      console.error("[GoalBet] getLeaderboard error:", error);
+      return [];
+    }
   }
 
   /** Get total pool */
   async getTotalPool(): Promise<number> {
-    const pool = await this.client.readContract({
-      address: CONTRACT_ADDRESS,
-      functionName: "get_total_pool",
-      args: [],
-    });
-    return Number(pool);
+    try {
+      const pool = await this.client.readContract({
+        address: CONTRACT_ADDRESS,
+        functionName: "get_total_pool",
+        args: [],
+      });
+      return Number(pool);
+    } catch (error) {
+      console.error("[GoalBet] getTotalPool error:", error);
+      return 0;
+    }
   }
 
   // ── Write Methods (signed via MetaMask) ─────────────────
@@ -179,7 +281,7 @@ export class GoalBetContract {
     oddsMultiplied: number
   ): Promise<{ txHash: string }> {
     const stakeWei = genToWei(stakeGEN);
-    
+
     const txHash = await this.client.writeContract({
       address: CONTRACT_ADDRESS,
       functionName: "create_bet",
