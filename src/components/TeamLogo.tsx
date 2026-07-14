@@ -27,26 +27,26 @@ export default function TeamLogo({
   const logoUrl = getTeamLogoUrl(teamCode);
   const sizeClass = sizeMap[size];
 
-  // If we have a logo URL and it hasn't errored, show the image
   if (logoUrl && !imgError) {
     return (
       <img
         src={logoUrl}
         alt={teamName}
-        className={`${sizeClass} object-contain drop-shadow-lg ${className}`}
+        className={`${sizeClass} object-contain ${className}`}
         onError={() => setImgError(true)}
         loading="lazy"
       />
     );
   }
 
-  // Fallback to emoji flag
   const flag = getFlag(teamCode);
   const emojiSize = size === "lg" ? "text-4xl" : size === "md" ? "text-3xl" : "text-2xl";
-
   return (
-    <span className={`${emojiSize} ${className}`} role="img" aria-label={teamName}>
+    <div
+      className={`${sizeClass} flex items-center justify-center ${emojiSize} ${className}`}
+      title={teamName}
+    >
       {flag}
-    </span>
+    </div>
   );
 }

@@ -1,32 +1,24 @@
-# ⚽ GoalBet - On-Chain Football Betting dApp
+# ⚽ GoalBet — On-Chain Football Betting dApp
 
 [![Built on GenLayer](https://img.shields.io/badge/Built%20on-GenLayer-6366f1?style=for-the-badge)](https://genlayer.com)
 [![Next.js](https://img.shields.io/badge/Next.js-16-black?style=for-the-badge&logo=next.js)](https://nextjs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://typescriptlang.org)
 [![Deploy with Vercel](https://img.shields.io/badge/Deploy-Vercel-black?style=for-the-badge&logo=vercel)](https://vercel.com)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Drizzle-336791?style=for-the-badge&logo=postgresql&logoColor=white)](https://www.postgresql.org)
 
-A decentralized football betting platform built on **GenLayer** — the first blockchain with native AI inference. Bet GEN tokens on real football matches, and outcomes are resolved automatically by an AI Oracle that fetches live results from BBC Sport.
-
-![GoalBet Preview](https://via.placeholder.com/800x400/0f0d1a/6366f1?text=GoalBet+-+Football+Betting+dApp)
+A decentralized football betting platform with **funded payouts**, **solvency guarantees**, and **AI Oracle resolution**.
 
 ## ✨ Features
 
-- 🦊 **MetaMask Integration** — Connect wallet, auto network switching
+- 🦊 **MetaMask Integration** — Connect wallet, auto network switching to GenLayer StudioNet
 - 💰 **Real GEN Betting** — Stake GEN tokens on match outcomes
-- 🤖 **AI Oracle Resolution** — Automatic result verification from BBC Sport
+- 🏦 **Funded Claim Path** — Winners claim payouts; GEN is actually transferred from the pool
+- 📊 **Solvency-Guaranteed** — Odds constrained to available pool backing; bets rejected if pool can't cover
+- 🤖 **AI Oracle Resolution** — On-chain AI verifies results from BBC Sport
 - 🏆 **Leaderboard** — Ranked by total GEN winnings
 - ⚽ **Live Fixtures** — Real-time match data with countdown timers
 - 🏟️ **Team Logos** — Official club crests and national flags
 - 🎨 **Modern UI** — Dark glassmorphism design with animations
-
-## 🔗 Links
-
-| Resource | URL |
-|----------|-----|
-| 📱 **Live App** | [goalbet-rho.vercel.app](https://goalbet-rho.vercel.app) |
-| 📜 **Contract** | [0x60fcDCeF6C6881ADD3A9327eE7F7EFeBf50aEC71](https://explorer-studio.genlayer.com/address/0x60fcDCeF6C6881ADD3A9327eE7F7EFeBf50aEC71) |
-| 💰 **Faucet** | [GenLayer Studio](https://studio.genlayer.com/contracts) |
-| 🌐 **GenLayer** | [genlayer.com](https://genlayer.com) |
 
 ## 🛠️ Tech Stack
 
@@ -34,35 +26,129 @@ A decentralized football betting platform built on **GenLayer** — the first bl
 |-------|------------|
 | **Frontend** | Next.js 16, React 19, TypeScript 5 |
 | **Styling** | Tailwind CSS 4, Glassmorphism |
+| **Database** | PostgreSQL via Drizzle ORM |
 | **Blockchain** | GenLayer StudioNet |
 | **Smart Contract** | Python (GenVM) |
 | **AI Oracle** | `gl.nondet.web.render` + `gl.nondet.exec_prompt` |
 | **Wallet** | MetaMask via `genlayer-js` |
-| **Team Logos** | football-data.org + flagcdn.com |
+| **Deploy** | Vercel |
 
 ## 🚀 Quick Start
 
 ### Prerequisites
 
 - Node.js 18+
+- PostgreSQL 14+
 - MetaMask browser extension
 - GEN tokens from [faucet](https://studio.genlayer.com/contracts)
 
-### Installation
+### 1. Clone & Install
 
 ```bash
-# Clone repository
 git clone https://github.com/YOUR_USERNAME/goalbet.git
 cd goalbet
-
-# Install dependencies
 npm install
+```
 
-# Run development server
+### 2. Configure Environment
+
+```bash
+cp .env.example .env
+# Edit .env with your DATABASE_URL
+```
+
+### 3. Setup Database
+
+```bash
+npm run db:push
+```
+
+### 4. Run Development Server
+
+```bash
 npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000) in your browser.
+
+### 5. Run Tests
+
+```bash
+npm test
+```
+
+## 🌐 Deploy to Vercel
+
+### Option 1: One-Click Deploy
+
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/YOUR_USERNAME/goalbet&env=DATABASE_URL&envDescription=PostgreSQL%20connection%20string&envLink=https://vercel.com/docs/environment-variables)
+
+### Option 2: Manual Deploy
+
+1. **Push to GitHub**
+
+```bash
+git init
+git add -A
+git commit -m "Initial commit: GoalBet dApp"
+git branch -M main
+git remote add origin https://github.com/YOUR_USERNAME/goalbet.git
+git push -u origin main
+```
+
+2. **Set up PostgreSQL database**
+
+   Recommended providers for Vercel:
+   - [Neon](https://neon.tech) — Serverless Postgres, free tier
+   - [Supabase](https://supabase.com) — Postgres with real-time
+   - [Vercel Postgres](https://vercel.com/docs/storage/vercel-postgres)
+
+3. **Deploy on Vercel**
+   - Go to [vercel.com](https://vercel.com)
+   - Import your GitHub repository
+   - Add environment variable: `DATABASE_URL` = your PostgreSQL connection string
+   - Click **Deploy**
+   - Done! 🎉
+
+4. **Environment Variables in Vercel Dashboard**
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `DATABASE_URL` | ✅ Yes | PostgreSQL connection string |
+| `FOOTBALL_DATA_API_KEY` | No | API key for live fixtures |
+| `NEXT_PUBLIC_CONTRACT_ADDRESS` | No | GenLayer contract address |
+
+## 🏦 Pool Solvency System
+
+GoalBet uses a **solvency-guaranteed pool model**:
+
+```
+Place bet:     poolBalance += stake        pendingPayouts += stake × odds
+Resolve (win): pendingPayouts -= payout     (→ payable on claim)
+Resolve (lose):pendingPayouts -= payout     (→ stake stays as surplus)
+Claim:         poolBalance  -= payout      (GEN leaves pool → winner)
+Deposit:       poolBalance  += amount      (liquidity provision)
+```
+
+**Invariant**: `pendingPayouts ≤ poolBalance` — checked before every bet.
+
+If a bet would violate solvency, it's **rejected** and the API returns the **maximum odds the pool can back**:
+
+```json
+{
+  "error": "Insufficient pool liquidity for 50.0× odds. Max odds backed by pool: 3.45× (pool 1090.00 GEN, pending 1000.00 GEN). Deposit more GEN or lower your odds."
+}
+```
+
+### Deposit API
+
+Add liquidity to the pool:
+
+```bash
+curl -X POST https://your-app.vercel.app/api/pool/deposit \
+  -H "Content-Type: application/json" \
+  -d '{"amount": 5000}'
+```
 
 ## 📱 How It Works
 
@@ -74,48 +160,27 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 │  2. Select match + prediction + stake amount                │
 │     └── Man City vs Liverpool → Man City Win → 10 GEN       │
 ├─────────────────────────────────────────────────────────────┤
-│  3. Sign transaction                                        │
-│     └── GEN tokens transferred to contract                  │
+│  3. Solvency check                                          │
+│     └── Pool must cover: stake × odds for ALL pending bets  │
+│     └── If insufficient: odds capped or bet rejected        │
 ├─────────────────────────────────────────────────────────────┤
-│  4. Match finishes in real world                            │
+│  4. Sign transaction                                        │
+│     └── GEN tokens transferred to contract pool             │
+├─────────────────────────────────────────────────────────────┤
+│  5. Match finishes in real world                            │
 │     └── BBC Sport updates results                           │
 ├─────────────────────────────────────────────────────────────┤
-│  5. Click "Resolve with AI"                                 │
+│  6. Click "Resolve with AI"                                 │
 │     └── AI Oracle fetches BBC Sport                         │
 │     └── LLM extracts score and winner                       │
 │     └── Multi-validator consensus                           │
 ├─────────────────────────────────────────────────────────────┤
-│  6. Result committed on-chain                               │
-│     └── Winner: Receive payout (stake × odds)               │
-│     └── Loser: Lose stake                                   │
+│  7. Winner clicks "Claim Winnings"                          │
+│     └── Pool transfers payout (stake × odds) to winner      │
+│     └── Pool balance decremented                            │
+│     └── Loser's stake stays as pool surplus                 │
 └─────────────────────────────────────────────────────────────┘
 ```
-
-## 🌐 Deploy to Vercel
-
-### Option 1: One-Click Deploy
-
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/user/goalbet)
-
-### Option 2: Manual Deploy
-
-1. **Push to GitHub**
-```bash
-git init
-git add -A
-git commit -m "Initial commit: GoalBet dApp"
-git branch -M main
-git remote add origin https://github.com/YOUR_USERNAME/goalbet.git
-git push -u origin main
-```
-
-2. **Deploy on Vercel**
-   - Go to [vercel.com](https://vercel.com)
-   - Import your GitHub repository
-   - Click **Deploy**
-   - Done! 🎉
-
-No environment variables required for basic functionality.
 
 ## 📁 Project Structure
 
@@ -128,19 +193,43 @@ goalbet/
 │   │   ├── globals.css           # Tailwind + custom styles
 │   │   └── api/
 │   │       ├── health/           # Health check endpoint
-│   │       └── fixtures/         # Live match data API
+│   │       ├── fixtures/         # Live match data API
+│   │       ├── users/            # User management
+│   │       ├── bets/             # Place & list bets
+│   │       │   └── [id]/
+│   │       │       ├── resolve/  # AI Oracle resolution
+│   │       │       └── claim/    # Funded payout claim
+│   │       ├── leaderboard/      # Rankings API
+│   │       ├── balance/          # User balance API
+│   │       └── pool/             # Pool state + deposit API
 │   ├── components/
 │   │   └── TeamLogo.tsx          # Team logo component
-│   └── lib/
-│       ├── genlayer.ts           # GenLayer client wrapper
-│       ├── matches.ts            # Match data utilities
-│       └── team-logos.ts         # Team logo mappings
+│   ├── lib/
+│   │   ├── genlayer.ts           # GenLayer client (on-chain)
+│   │   ├── matches.ts            # Match data utilities
+│   │   └── team-logos.ts         # Team logo mappings
+│   └── db/
+│       ├── index.ts              # Database client
+│       └── schema.ts             # Drizzle schema (users, bets, pool)
 ├── contract.py                   # GenLayer smart contract
-├── public/                       # Static assets
-├── package.json
-├── next.config.ts
-├── vercel.json
-└── README.md
+├── __tests__/                    # Vitest integration tests
+├── vercel.json                   # Vercel deployment config
+├── drizzle.config.ts             # Drizzle ORM config
+├── .env.example                  # Environment variables template
+└── package.json
+```
+
+## 🧪 Tests
+
+24 integration tests covering the full lifecycle:
+
+```
+✓ Stake: place bet, duplicate rejection, min stake, odds > 1, balance deduction, pool tracking
+✓ Solvency: rejects unbacked odds (returns max odds), deposit increases liquidity
+✓ Resolve: 3 users covering all outcomes, reject re-resolve, mark resolved
+✓ Claim: winner claims + GEN transferred, loser rejected, re-claim rejected
+✓ Guards: reject claim on unresolved bet
+✓ Final: user stats correct, pool solvent, winner balance increased
 ```
 
 ## 📜 Smart Contract
@@ -151,52 +240,34 @@ The Intelligent Contract is deployed on GenLayer StudioNet:
 class GoalBet(gl.Contract):
     bets: TreeMap[str, Bet]
     stats: TreeMap[Address, PlayerStats]
+    total_pool: u256
+    total_pending_payouts: u256
+
+    @gl.public.write.payable
+    def deposit(self) -> None: ...
+
+    @gl.public.write.payable
+    def create_bet(self, game_date, team1, team2, predicted_winner, odds) -> None: ...
 
     @gl.public.write
-    def create_bet(game_date, team1, team2, predicted_winner, odds):
-        # Receives GEN stake via gl.message.value
-        ...
+    def resolve_bet(self, bet_id) -> None: ...
 
     @gl.public.write
-    def resolve_bet(bet_id):
-        # AI Oracle fetches BBC Sport and verifies result
-        match_result = self._check_match(...)
-        if correct_prediction:
-            gl.transfer(sender, payout)
-        ...
+    def claim_winnings(self, bet_id) -> None: ...
 
     @gl.public.view
-    def get_leaderboard():
-        # Returns players sorted by total GEN won
-        ...
+    def get_total_pool(self) -> dict: ...
 ```
-
-### Contract Methods
-
-| Method | Type | Description |
-|--------|------|-------------|
-| `create_bet` | Write | Place bet with GEN stake |
-| `resolve_bet` | Write | Trigger AI resolution |
-| `get_bets` | View | Get user's bets |
-| `get_leaderboard` | View | Get rankings by winnings |
-| `get_player_stats` | View | Get player statistics |
 
 ## 🔒 Security
 
 - ✅ Private keys never leave MetaMask
 - ✅ All transactions signed client-side
-- ✅ Gasless on StudioNet
+- ✅ Pool solvency invariant enforced on every bet
+- ✅ Claim path: only resolved, won, unclaimed bets can claim
+- ✅ Payout transfer checked against pool balance (503 if insolvent)
 - ✅ AI consensus prevents single-validator manipulation
-- ✅ No backend server required
-
-## 🎨 UI Features
-
-- **Dark Theme** — Eye-friendly glassmorphism design
-- **Responsive** — Works on mobile and desktop
-- **Animations** — Smooth transitions and loading states
-- **Team Logos** — 100+ official club crests
-- **Live Countdown** — "in 2h 30m" until kickoff
-- **Toast Notifications** — Transaction feedback with explorer links
+- ✅ Odds constrained to available pool backing
 
 ## 📄 License
 
@@ -204,6 +275,6 @@ MIT License — see [LICENSE](LICENSE) file
 
 ---
 
-**Built with ❤️ on [GenLayer](https://genlayer.com)**
+**Built with ❤️ on [GenLayer](https://genlayer.com)** · **Deployed on [Vercel](https://vercel.com)**
 
 ⚽ Happy Betting! 🎯

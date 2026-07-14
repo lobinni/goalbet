@@ -1,35 +1,47 @@
 {
   "name": "goalbet",
   "version": "1.0.0",
-  "description": "On-Chain Football Betting dApp on GenLayer - Bet GEN tokens on real matches with AI Oracle resolution",
+  "description": "⚽ GoalBet — On-Chain Football Betting dApp on GenLayer with funded payouts, solvency checks, and AI Oracle resolution",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "db:push": "drizzle-kit push",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "vercel-build": "npm run db:push && next build"
   },
   "dependencies": {
-    "genlayer-js": "^0.18.2",
+    "dotenv": "17.3.1",
+    "drizzle-orm": "0.45.2",
+    "genlayer-js": "^1.1.8",
     "next": "16.2.6",
+    "pg": "8.20.0",
     "react": "19.2.6",
     "react-dom": "19.2.6"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "4.1.17",
     "@types/node": "22.19.15",
+    "@types/pg": "8.18.0",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
+    "drizzle-kit": "0.31.10",
     "eslint": "9.39.4",
     "eslint-config-next": "16.2.6",
     "postcss": "8.5.8",
     "tailwindcss": "4.1.17",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "vitest": "^4.1.10"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/user/goalbet.git"
+    "url": "https://github.com/lobinni/goalbet.git"
   },
   "keywords": [
     "football",
@@ -39,7 +51,9 @@
     "ai-oracle",
     "web3",
     "nextjs",
-    "dapp"
+    "dapp",
+    "solvency",
+    "vercel"
   ],
   "author": "",
   "license": "MIT",

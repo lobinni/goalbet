@@ -1,7 +1,6 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // Allow external images from logo CDNs
   images: {
     remotePatterns: [
       {
@@ -14,6 +13,7 @@ const nextConfig: NextConfig = {
       },
     ],
   },
+  serverExternalPackages: ["genlayer-js", "pg"],
 };
 
 export default nextConfig;

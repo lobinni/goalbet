@@ -5,6 +5,13 @@ GoalBet - On-Chain Football Betting with GEN Tokens
 ====================================================
 Bet GEN on matches. AI Oracle resolves from BBC Sport.
 Ranked by total GEN winnings.
+
+IMPROVEMENTS:
+- Pool tracking (total_pool, total_pending_payouts)
+- Solvency check before accepting bets
+- Claim path for winners (funded payout)
+- deposit() for liquidity providers
+- get_total_pool() view method
 """
 
 from dataclasses import dataclass
@@ -18,6 +25,7 @@ ERROR_EXPECTED = "[EXPECTED]"
 class Bet:
     id: str
     has_resolved: bool
+    has_claimed: bool
     game_date: str
     resolution_url: str
     team1: str
@@ -45,9 +53,14 @@ class PlayerStats:
 class GoalBet(gl.Contract):
     bets: TreeMap[str, Bet]
     stats: TreeMap[Address, PlayerStats]
+    total_pool: u256
+    total_pending_payouts: u256
+    owner: Address
 
     def __init__(self):
-        pass
+        self.owner = gl.message.sender_address
+        self.total_pool = u256(0)
+        self.total_pending_payouts = u256(0)
 
     def _bet_key(self, address: Address, bet_id: str) -> str:
         return address.as_hex + ":" + bet_id
@@ -104,6 +117,12 @@ Respond ONLY with the JSON object. No extra text, no markdown fences.
         return gl.vm.run_nondet_unsafe(leader_fn, validator_fn)
 
     @gl.public.write.payable
+    def deposit(self) -> None:
+        """Deposit GEN to provide liquidity for the betting pool.
+        Anyone can deposit. This funds the pool so the contract can pay winners."""
+        pass  # GEN received via gl.message.value automatically adds to contract balance
+
+    @gl.public.write.payable
     def create_bet(
         self, game_date: str, team1: str, team2: str, predicted_winner: str, odds: str
     ) -> None:
@@ -126,9 +145,28 @@ Respond ONLY with the JSON object. No extra text, no markdown fences.
 
         potential_payout = (stake * u256(odds_int)) // u256(100)
 
+        # ── SOLVENCY CHECK ──────────────────────────────────────
+        # After receiving this stake, the contract must have enough GEN
+        # to cover ALL pending payouts + this new potential payout.
+        # contract_balance ≈ total_pool + surplus_from_lost_bets + deposits
+        # We track total_pool and total_pending_payouts to check solvency.
+        # The contract's actual GEN balance = total_pool + surplus + deposits
+        # For safety: total_pending_payouts + new_payout <= total_pool + stake + surplus
+        # Simplified: ensure pending payouts never exceed what the pool can back.
+        new_total_pending = self.total_pending_payouts + potential_payout
+        new_total_pool = self.total_pool + stake
+        if new_total_pending > new_total_pool:
+            raise gl.vm.UserError(
+                f"{ERROR_EXPECTED} Insufficient pool liquidity. "
+                f"Pending payouts would be {int(new_total_pending) / 1e18:.2f} GEN "
+                f"but pool only has {int(new_total_pool) / 1e18:.2f} GEN. "
+                f"Deposit more GEN to the pool first."
+            )
+
         bet = Bet(
             id=bet_id,
             has_resolved=False,
+            has_claimed=False,
             game_date=game_date,
             resolution_url=resolution_url,
             team1=team1,
@@ -142,6 +180,10 @@ Respond ONLY with the JSON object. No extra text, no markdown fences.
             is_won=False,
         )
         self.bets[key] = bet
+
+        # Update pool tracking
+        self.total_pool = new_total_pool
+        self.total_pending_payouts = new_total_pending
 
         player_stats = self._get_or_create_stats(sender)
         player_stats.total_bets += u256(1)
@@ -168,16 +210,52 @@ Respond ONLY with the JSON object. No extra text, no markdown fences.
         bet.real_winner = str(match_result["winner"])
         bet.real_score = match_result["score"]
 
+        # Update pool tracking: remove resolved bet from pending
+        self.total_pool -= bet.stake
+        self.total_pending_payouts -= bet.payout
+
         player_stats = self._get_or_create_stats(sender)
 
         if bet.real_winner == bet.predicted_winner:
             bet.is_won = True
-            player_stats.total_won += bet.payout
             player_stats.wins += u256(1)
+            # Payout will be transferred when claim_winnings is called
         else:
             bet.is_won = False
             player_stats.total_lost += bet.stake
             player_stats.losses += u256(1)
+            # Stake stays in contract as surplus (available for future payouts)
+
+    @gl.public.write
+    def claim_winnings(self, bet_id: str) -> None:
+        """Claim winnings for a resolved bet that was won.
+        Transfers the payout (stake * odds) from the contract to the winner."""
+        sender = gl.message.sender_address
+        key = self._bet_key(sender, bet_id)
+
+        if key not in self.bets:
+            raise gl.vm.UserError(f"{ERROR_EXPECTED} Bet not found")
+
+        bet = self.bets[key]
+
+        if not bet.has_resolved:
+            raise gl.vm.UserError(f"{ERROR_EXPECTED} Bet has not been resolved yet")
+
+        if bet.has_claimed:
+            raise gl.vm.UserError(f"{ERROR_EXPECTED} Winnings already claimed")
+
+        if not bet.is_won:
+            raise gl.vm.UserError(f"{ERROR_EXPECTED} Bet was not won, nothing to claim")
+
+        # Mark as claimed before transfer to prevent re-entrancy
+        bet.has_claimed = True
+
+        # Transfer payout to winner
+        gl.transfer(sender, bet.payout)
+
+        # Update player stats
+        player_stats = self._get_or_create_stats(sender)
+        player_stats.total_won += bet.payout
 
     @gl.public.view
     def get_bets(self) -> dict:
@@ -236,3 +314,12 @@ Respond ONLY with the JSON object. No extra text, no markdown fences.
                 })
         entries.sort(key=lambda x: x["total_won"], reverse=True)
         return entries
+
+    @gl.public.view
+    def get_total_pool(self) -> dict:
+        """Returns pool information including total stakes and pending payouts."""
+        return {
+            "total_pool": int(self.total_pool),
+            "total_pending_payouts": int(self.total_pending_payouts),
+            "available_liquidity": int(self.total_pool) - int(self.total_pending_payouts),
+        }

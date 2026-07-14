@@ -1,100 +1,88 @@
-# 🚀 Deploy GoalBet to GitHub & Vercel
+# 🚀 Hướng dẫn Deploy GoalBet lên GitHub + Vercel
 
-## Step 1: Create GitHub Repository
+## Bước 1: Tạo repository trên GitHub
 
-1. Go to [github.com/new](https://github.com/new)
-2. Fill in:
-   - **Repository name**: `goalbet`
-   - **Description**: `On-Chain Football Betting dApp on GenLayer`
-   - **Visibility**: Public
-3. **DO NOT** check "Add a README file"
-4. Click **Create repository**
+1. Mở https://github.com/new
+2. Tạo repo tên `goalbet` (Public hoặc Private)
+3. **KHÔNG** check "Add a README" hay .gitignore (đã có sẵn)
 
-## Step 2: Push Code to GitHub
+## Bước 2: Push code lên GitHub
 
 ```bash
-# Initialize git (if not already)
-git init
-
-# Add all files
-git add -A
-
-# Create commit
-git commit -m "🚀 GoalBet - On-Chain Football Betting dApp"
-
-# Set main branch
-git branch -M main
-
-# Add remote (replace YOUR_USERNAME)
+# Thêm remote (thay YOUR_USERNAME bằng username GitHub của bạn)
 git remote add origin https://github.com/YOUR_USERNAME/goalbet.git
 
-# Push to GitHub
+# Push code lên
 git push -u origin main
 ```
 
-## Step 3: Deploy to Vercel
-
-### Option A: One-Click Deploy
-
-Click this button after pushing to GitHub:
-
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/YOUR_USERNAME/goalbet)
-
-### Option B: Manual Deploy
-
-1. Go to [vercel.com](https://vercel.com)
-2. Sign in with GitHub
-3. Click **"Add New"** → **"Project"**
-4. Find and select `goalbet` repository
-5. Click **"Import"**
-6. Keep default settings (Framework: Next.js)
-7. Click **"Deploy"**
-
-Wait ~1 minute for deployment.
-
-## Step 4: Access Your App
-
-Your app will be live at:
-```
-https://goalbet-rho.vercel.app
-```
-
-Or a custom URL assigned by Vercel.
-
-## 🔄 Auto-Deploy Updates
-
-After initial setup, every `git push` automatically redeploys:
-
+Nếu dùng SSH:
 ```bash
-# Make changes, then:
-git add -A
-git commit -m "Your commit message"
-git push
+git remote add origin git@github.com:YOUR_USERNAME/goalbet.git
+git push -u origin main
 ```
 
-## ⚙️ Optional: Custom Domain
+## Bước 3: Tạo PostgreSQL Database
 
-1. Go to Vercel Dashboard → Your Project → Settings → Domains
-2. Add your domain (e.g., `goalbet.com`)
-3. Update DNS records as instructed
+Chọn 1 trong các provider sau (đều có free tier):
 
-## ❓ Troubleshooting
+### Option A: Neon (Recommended)
+1. Mở https://neon.tech → Sign up
+2. Create new project → Copy connection string
+3. Format: `postgresql://username:password@ep-xxx.region.aws.neon.tech/goalbet?sslmode=require`
 
-### Build fails?
-```bash
-# Test build locally first
-npm run build
-```
+### Option B: Supabase
+1. Mở https://supabase.com → New project
+2. Settings → Database → Copy connection string
 
-### MetaMask not connecting?
-- Install MetaMask extension
-- Switch to GenLayer StudioNet network
-- Get GEN from faucet: https://studio.genlayer.com/contracts
+### Option C: Vercel Postgres
+1. Mở https://vercel.com/dashboard → Storage → Create Database → Postgres
+2. Copy `POSTGRES_URL`
 
-### Blank page?
-- Check browser console (F12) for errors
-- Ensure MetaMask is unlocked
+## Bước 4: Deploy trên Vercel
 
----
+### Cách 1: One-Click
+Click badge trong README.md hoặc:
+https://vercel.com/new/clone?repository-url=https://github.com/YOUR_USERNAME/goalbet
 
-**Need help?** Check [GenLayer Docs](https://docs.genlayer.com) or create an issue.
+### Cách 2: Manual
+1. Mở https://vercel.com/dashboard
+2. **Add New...** → Project
+3. Import Git Repository → Chọn `goalbet`
+4. Configure Project:
+   - Framework Preset: **Next.js** (auto-detected)
+   - Build Command: `npm run vercel-build` (đã có trong vercel.json)
+5. **Environment Variables** → Add:
+   ```
+   DATABASE_URL = postgresql://username:password@your-host/goalbet?sslmode=require
+   ```
+6. Click **Deploy**
+7. Đợi ~2 phút, xong! 🎉
+
+## Bước 5: Kiểm tra
+
+Sau khi deploy xong:
+1. Mở URL Vercel cấp (vd: `goalbet.vercel.app`)
+2. Kiểm tra health: `goalbet.vercel.app/api/health`
+3. Kiểm tra pool: `goalbet.vercel.app/api/pool`
+4. Nạp thêm GEN vào pool:
+   ```bash
+   curl -X POST https://goalbet.vercel.app/api/pool/deposit \
+     -H "Content-Type: application/json" \
+     -d '{"amount": 5000}'
+   ```
+
+## 🔧 Cấu trúc Environment Variables
+
+| Variable | Required | Mô tả |
+|----------|----------|--------|
+| `DATABASE_URL` | ✅ | PostgreSQL connection string |
+| `FOOTBALL_DATA_API_KEY` | ❌ | API key cho live fixtures |
+| `NEXT_PUBLIC_CONTRACT_ADDRESS` | ❌ | GenLayer contract address |
+
+## 📝 Lưu ý
+
+- `vercel.json` đã cấu hình `buildCommand: npm run vercel-build`
+- `vercel-build` script chạy `npm run db:push` (push schema) rồi `next build`
+- Database schema tự động push mỗi lần deploy
+- Pool default 1000 GEN khi deploy lần đầu
