@@ -1,73 +1,63 @@
 # ⚽ GoalBet — On-Chain Football Prediction Market
 
-Decentralized football prediction market powered by **GenLayer AI Oracle** and **USDC on Base Sepolia**.
+Decentralized football prediction market powered by **GenLayer AI Oracle** for trustless match resolution and **USDC on Base Sepolia** for betting.
 
-## Architecture
-
-```
-User (MetaMask / Base Sepolia)
-  │── Deposit USDC ──→ Project Wallet (custodial)
-  │── Place Bets ────→ PostgreSQL (pool tracking) + GenLayer (on-chain record)
-  │── Claim Wins ────→ PostgreSQL (payout = stake/winning_pool × total_pool)
-  │
-Server (Next.js)
-  │── /api/resolve ──→ GenLayer AI Oracle
-  │                     → gl.get_webpage(BBC Sport)
-  │                     → gl.exec_prompt(extract score)
-  │                     → gl.eq_principle_strict_eq (multi-validator consensus)
-  │                     → On-chain verified result
-```
-
-## Contract
+## 🏗 Architecture
 
 ```
-GoalBetV2 on GenLayer StudioNet
-Address: 0xAaE949a5eE8808ABFAd804ea562213Aca3C028d5
-Explorer: https://explorer-studio.genlayer.com/address/0xAaE949a5eE8808ABFAd804ea562213Aca3C028d5
+┌─────────────────────────────────────────────────────────────┐
+│  User (MetaMask on Base Sepolia)                            │
+│  → Connect wallet → auto-register                           │
+│  → Deposit USDC → place bets → claim winnings               │
+└────────────────────────┬────────────────────────────────────┘
+                         │
+┌────────────────────────▼────────────────────────────────────┐
+│  Next.js + PostgreSQL  (Backbone)                           │
+│  /api/bets       → pool tracking, payout calculation        │
+│  /api/resolve    → calls GenLayer AI Oracle                 │
+│  /api/fixtures   → live match data                          │
+└────────────────────────┬────────────────────────────────────┘
+                         │
+┌────────────────────────▼────────────────────────────────────┐
+│  GenLayer StudioNet  (Brain — AI Oracle)                    │
+│  Contract: 0xAaE949a5eE8808ABFAd804ea562213Aca3C028d5      │
+│  → resolve_market() fetches BBC Sport                       │
+│  → LLM extracts match score                                │
+│  → Multi-validator consensus                                │
+│  → Verified result stored on-chain                          │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-## Deploy to Vercel
+## 🚀 Deploy
 
 ### 1. Push to GitHub
 
 ```bash
-git init
-git add -A
-git commit -m "GoalBet: AI-powered football prediction market"
+git init && git add -A
+git commit -m "GoalBet: AI prediction market"
 git branch -M main
 git remote add origin https://github.com/YOUR_USER/goalbet.git
 git push -u origin main
 ```
 
-### 2. Create PostgreSQL database
+### 2. Create PostgreSQL — [neon.tech](https://neon.tech) (free)
 
-Use [Neon](https://neon.tech) (free) or [Supabase](https://supabase.com):
-- Create a new project
-- Copy the connection string
+### 3. Deploy on [vercel.com](https://vercel.com)
 
-### 3. Deploy on Vercel
+Import repo → set environment variables:
 
-- Go to [vercel.com](https://vercel.com) → Import GitHub repo
-- Add environment variable:
-  - `DATABASE_URL` = your PostgreSQL connection string
-  - `NEXT_PUBLIC_CONTRACT_ADDRESS` = `0xAaE949a5eE8808ABFAd804ea562213Aca3C028d5`
-- Click **Deploy**
+| Variable | Value |
+|---|---|
+| `DATABASE_URL` | `postgresql://...` (from Neon) |
+| `NEXT_PUBLIC_CONTRACT_ADDRESS` | `0xAaE949a5eE8808ABFAd804ea562213Aca3C028d5` |
 
-### 4. Push database schema
+### 4. Push schema + seed
 
 ```bash
-npx drizzle-kit push
+DATABASE_URL="your_neon_url" npx drizzle-kit push
+curl -X POST https://your-app.vercel.app/api/seed-test
 ```
 
-## Local Development
-
-```bash
-npm install
-cp .env.example .env
-# Edit .env with your DATABASE_URL
-npm run dev
-```
-
-## License
+## 📜 License
 
 MIT

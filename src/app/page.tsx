@@ -100,15 +100,23 @@ export default function GoalBetApp() {
   useEffect(()=>{
     if(!account) return;
     (async () => {
-      // Check if user exists
+      // Try to find existing user
       const res = await fetch(`/api/users/me?wallet=${account.toLowerCase()}`);
       const data = await res.json();
-      if(data.user) { setUser(data.user); return; }
-      // Auto-register
+      if(data.user) {
+        setUser(data.user);
+        return;
+      }
+      // Not found → auto-register (creates project wallet + 0 balance)
       const reg = await fetch("/api/users/register",{method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({walletAddress:account})});
       const rd = await reg.json();
-      if(rd.user) { setUser(rd.user); notify("Welcome! Deposit USDC to start betting.","ok"); }
+      if(rd.user) {
+        setUser(rd.user);
+        notify("Welcome! Deposit USDC to start betting.","ok");
+        // Auto-open deposit modal for new users
+        setShowDeposit(true);
+      }
     })().catch(()=>{});
   },[account, notify]);
 
@@ -347,6 +355,19 @@ export default function GoalBetApp() {
       </div>
 
        <main className="max-w-5xl mx-auto px-4 mt-6">
+        {/* Zero balance banner */}
+        {Number(user.balance) === 0 && (
+          <div className="glass-card p-4 mb-6 flex items-center justify-between border-warning/30">
+            <div>
+              <p className="font-medium text-warning">💰 Your balance is 0 USDC</p>
+              <p className="text-xs text-silver mt-1">Deposit USDC (Base Sepolia) to start betting on matches</p>
+            </div>
+            <button onClick={()=>setShowDeposit(true)} className="px-4 py-2 rounded-lg bg-warning text-black text-sm font-bold hover:opacity-90 whitespace-nowrap">
+              Deposit USDC
+            </button>
+          </div>
+        )}
+
         {/* ── MATCHES ── */}
         {activeTab==="matches" && (
           <div className="space-y-6">
