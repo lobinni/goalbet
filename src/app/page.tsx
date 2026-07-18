@@ -96,28 +96,41 @@ export default function GoalBetApp() {
     return ()=>{ eth.removeListener("accountsChanged",h); };
   },[]);
 
-  // Auto-register user on wallet connect (no username prompt)
+  // Auto-register user on wallet connect (instant, no username)
   useEffect(()=>{
     if(!account) return;
+    let cancelled = false;
     (async () => {
-      // Try to find existing user
-      const res = await fetch(`/api/users/me?wallet=${account.toLowerCase()}`);
-      const data = await res.json();
-      if(data.user) {
-        setUser(data.user);
-        return;
+      try {
+        // 1. Check existing
+        const res = await fetch(`/api/users/me?wallet=${account.toLowerCase()}`);
+        const data = await res.json();
+        if(!cancelled && data.user) { setUser(data.user); return; }
+
+        // 2. Auto-register
+        const reg = await fetch("/api/users/register",{
+          method:"POST",
+          headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({walletAddress:account}),
+        });
+        const rd = await reg.json();
+        if(!cancelled && rd.user) {
+          setUser(rd.user);
+          notify("Welcome! Deposit USDC to start betting.","ok");
+          setShowDeposit(true);
+        }
+      } catch {
+        // Network error — still show app with empty user
+        if(!cancelled) {
+          setUser({
+            id:"", username:"", walletAddress: account,
+            projectWallet:"", balance:"0",
+            totalBets:0, totalStaked:"0", totalWon:"0", wins:0, losses:0,
+          });
+        }
       }
-      // Not found → auto-register (creates project wallet + 0 balance)
-      const reg = await fetch("/api/users/register",{method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({walletAddress:account})});
-      const rd = await reg.json();
-      if(rd.user) {
-        setUser(rd.user);
-        notify("Welcome! Deposit USDC to start betting.","ok");
-        // Auto-open deposit modal for new users
-        setShowDeposit(true);
-      }
-    })().catch(()=>{});
+    })();
+    return ()=>{ cancelled = true; };
   },[account, notify]);
 
   // ── deposit USDC ──
@@ -306,8 +319,8 @@ export default function GoalBetApp() {
     <div className="min-h-screen flex items-center justify-center p-4">
       <div className="text-center max-w-md animate-fade-in">
         <div className="text-5xl mb-4 animate-pulse">⚽</div>
-        <h2 className="text-2xl font-bold mb-2">Setting up your account...</h2>
-        <p className="text-silver">{shortenAddress(account)}</p>
+        <p className="text-silver mb-4">{shortenAddress(account)}</p>
+        <p className="text-xs text-surface-lighter">Connecting to GoalBet...</p>
       </div>
     </div>
   );

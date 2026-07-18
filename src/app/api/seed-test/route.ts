@@ -1,7 +1,7 @@
 import { db } from "@/db";
 import { users, markets, bets } from "@/db/schema";
 import { eq, sql } from "drizzle-orm";
-import { ethers } from "ethers";
+import { createProjectWallet } from "@/lib/wallet";
 export const dynamic = "force-dynamic";
 
 /**
@@ -24,7 +24,7 @@ export async function POST() {
       { name: "mbappé_fan", bal: "500" },
       { name: "neutral_bet", bal: "500" },
     ]) {
-      const w = ethers.Wallet.createRandom();
+      const w = createProjectWallet();
       const row = await db.insert(users).values({
         id: `u-test-${t.name}`,
         username: t.name,

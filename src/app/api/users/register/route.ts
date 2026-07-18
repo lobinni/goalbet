@@ -1,12 +1,9 @@
 import { db } from "@/db";
 import { users } from "@/db/schema";
 import { eq } from "drizzle-orm";
-import { ethers } from "ethers";
+import { createProjectWallet } from "@/lib/wallet";
 export const dynamic = "force-dynamic";
 
-/**
- * POST /api/users/register — auto-register on wallet connect (no username needed)
- */
 export async function POST(req: Request) {
   const { walletAddress } = await req.json();
   if (!walletAddress)
@@ -14,19 +11,17 @@ export async function POST(req: Request) {
 
   const addr = walletAddress.toLowerCase();
 
-  // Return existing user
+  // Return existing user instantly
   const existing = await db.select().from(users).where(eq(users.walletAddress, addr)).limit(1);
-  if (existing.length) return Response.json({ user: { ...existing[0], projectWalletPk: undefined } });
+  if (existing.length)
+    return Response.json({ user: { ...existing[0], projectWalletPk: undefined } });
 
-  // Auto-generate username from wallet address
-  const username = `player_${addr.slice(2, 8)}`;
-
-  // Create custodial project wallet
-  const wallet = ethers.Wallet.createRandom();
+  // Create new user with lightweight wallet (no ethers.js)
+  const wallet = createProjectWallet();
 
   const row = await db.insert(users).values({
     id: `u-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-    username,
+    username: `player_${addr.slice(2, 8)}`,
     walletAddress: addr,
     projectWallet: wallet.address,
     projectWalletPk: wallet.privateKey,
