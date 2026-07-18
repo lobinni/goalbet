@@ -1,17 +1,10 @@
 {
-  "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
-  "buildCommand": "npm run vercel-build",
+  "buildCommand": "npm run build",
   "installCommand": "npm install",
-  "regions": ["iad1"],
-  "headers": [
-    {
-      "source": "/(.*)",
-      "headers": [
-        { "key": "X-Content-Type-Options", "value": "nosniff" },
-        { "key": "X-Frame-Options", "value": "DENY" },
-        { "key": "X-XSS-Protection", "value": "1; mode=block" }
-      ]
+  "functions": {
+    "src/app/api/resolve/route.ts": {
+      "maxDuration": 300
     }
-  ]
+  }
 }

@@ -29,10 +29,11 @@ export default function TeamLogo({
 
   if (logoUrl && !imgError) {
     return (
+      // eslint-disable-next-line @next/next/no-img-element
       <img
         src={logoUrl}
         alt={teamName}
-        className={`${sizeClass} object-contain ${className}`}
+        className={`${sizeClass} object-contain rounded-full ${className}`}
         onError={() => setImgError(true)}
         loading="lazy"
       />
@@ -40,13 +41,16 @@ export default function TeamLogo({
   }
 
   const flag = getFlag(teamCode);
-  const emojiSize = size === "lg" ? "text-4xl" : size === "md" ? "text-3xl" : "text-2xl";
+  const emojiSize =
+    size === "lg" ? "text-4xl" : size === "md" ? "text-3xl" : "text-2xl";
+
   return (
-    <div
+    <span
       className={`${sizeClass} flex items-center justify-center ${emojiSize} ${className}`}
-      title={teamName}
+      role="img"
+      aria-label={teamName}
     >
       {flag}
-    </div>
+    </span>
   );
 }

@@ -1,1049 +1,616 @@
 "use client";
-
 import { useState, useEffect, useCallback } from "react";
 import TeamLogo from "@/components/TeamLogo";
 import {
-  type Match,
-  groupMatchesByDate,
-  generateBetId,
-  formatDateHeader,
-  getTimeUntilMatch,
-  shortenAddress,
+  type Match, groupMatchesByDate, formatDateHeader, getTimeUntilMatch,
+  formatKickoffTime, LEAGUE_INFO,
 } from "@/lib/matches";
-import { getTeamCodeFromName } from "@/lib/team-logos";
 import {
-  GoalBetContract,
-  getEthereum,
-  sameChain,
-  getNetworkLabel,
-  GENLAYER_NETWORK,
-  EXPLORER_TX_URL,
-  FAUCET_URL,
-  CONTRACT_ADDRESS,
-  weiToGEN,
-  type Bet,
-  type LeaderboardEntry,
-  type PlayerStats,
-  type PoolInfo,
+  getEthereum, shortenAddress,
+  BASE_SEPOLIA, USDC_ADDRESS, USDC_DECIMALS,
+  CONTRACT_ADDRESS, EXPLORER_TX,
 } from "@/lib/genlayer";
 
-// ─── Component ──────────────────────────────────────────────────
+/* ── tiny ERC-20 ABI for USDC transfer ── */
+const ERC20_TRANSFER_ABI = "0xa9059cbb"; // transfer(address,uint256)
 
+// ─── types ──────────────────────────────────────────────────────
+interface AppUser {
+  id: string; username: string; walletAddress: string;
+  projectWallet: string; balance: string;
+  totalBets: number; totalStaked: string; totalWon: string;
+  wins: number; losses: number;
+}
+interface BetRow {
+  id: string; marketId: string; outcome: number; amount: string;
+  payout: string | null; isWon: boolean | null; claimed: boolean;
+}
+interface MarketRow {
+  id: string; gameDate: string; team1: string; team2: string;
+  team1Code: string; team2Code: string; league: string;
+  poolHome: string; poolDraw: string; poolAway: string; totalPool: string;
+  totalBets: number; isResolved: boolean; winningOutcome: number;
+  finalScore: string | null; kickoffTime: string | null;
+}
+interface LBEntry {
+  username: string; address: string; totalWon: string;
+  totalStaked: string; profit: string; wins: number; losses: number;
+}
+
+// ═══════════════════════════════════════════════════════════════
 export default function GoalBetApp() {
-  // Auth state
   const [account, setAccount] = useState<string | null>(null);
-  const [chainId, setChainId] = useState<string | null>(null);
-  const [contract, setContract] = useState<GoalBetContract | null>(null);
-  const [hasMetaMask, setHasMetaMask] = useState(true);
-  const [connectingWallet, setConnectingWallet] = useState(false);
+  const [user, setUser] = useState<AppUser | null>(null);
 
-  // Data state
   const [matches, setMatches] = useState<Match[]>([]);
   const [matchesLoading, setMatchesLoading] = useState(true);
-  const [myBets, setMyBets] = useState<Record<string, Bet>>({});
-  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
-  const [myStats, setMyStats] = useState<PlayerStats | null>(null);
-  const [genBalance, setGenBalance] = useState("0");
-  const [poolInfo, setPoolInfo] = useState<PoolInfo | null>(null);
-  const [stakeAmount, setStakeAmount] = useState("10");
+  const [myBets, setMyBets] = useState<BetRow[]>([]);
+  const [marketsCache, setMarketsCache] = useState<Record<string, MarketRow>>({});
+  const [leaderboard, setLeaderboard] = useState<LBEntry[]>([]);
 
-  // UI state
-  const [activeTab, setActiveTab] = useState<"matches" | "mybets" | "leaderboard">("matches");
-  const [betModal, setBetModal] = useState<{ match: Match; selection: string } | null>(null);
-  const [notification, setNotification] = useState<{
-    message: string;
-    type: "success" | "error" | "info";
-    txHash?: string;
-  } | null>(null);
+  const [activeTab, setActiveTab] = useState<"matches"|"mybets"|"leaderboard">("matches");
+  const [betModal, setBetModal] = useState<{match:Match;selection:number}|null>(null);
+  const [stakeAmount, setStakeAmount] = useState("5");
   const [loading, setLoading] = useState(false);
-  const [resolvingBet, setResolvingBet] = useState<string | null>(null);
-  const [claimingBet, setClaimingBet] = useState<string | null>(null);
-  const [betsLoading, setBetsLoading] = useState(false);
-  const [leaderboardLoading, setLeaderboardLoading] = useState(false);
+  const [depositAmt, setDepositAmt] = useState("10");
+  const [depositing, setDepositing] = useState(false);
+  const [showDeposit, setShowDeposit] = useState(false);
 
-  // Check for MetaMask on mount
-  useEffect(() => {
-    setHasMetaMask(!!getEthereum());
-  }, []);
+  const [note, setNote] = useState<{msg:string;type:"ok"|"err"|"info"}|null>(null);
+  const notify = useCallback((msg:string, type:"ok"|"err"|"info"="info")=>{
+    setNote({msg,type}); setTimeout(()=>setNote(null),5000);
+  },[]);
 
-  const isCorrectNetwork = sameChain(chainId, GENLAYER_NETWORK.chainIdHex);
+  // ── wallet connect ──
+  const connect = async () => {
+    const eth = getEthereum(); if(!eth) return notify("Install MetaMask","err");
+    try {
+      const accs = (await eth.request({method:"eth_requestAccounts"})) as string[];
+      if(accs.length) { setAccount(accs[0]); await switchToBase(); }
+    } catch { notify("Connection failed","err"); }
+  };
 
-  // ─── Notifications ─────────────────────────────────────────
+  const switchToBase = async () => {
+    const eth = getEthereum(); if(!eth) return;
+    try {
+      await eth.request({method:"wallet_switchEthereumChain",params:[{chainId:BASE_SEPOLIA.chainIdHex}]});
+    } catch(e:unknown) {
+      if((e as {code:number}).code===4902) {
+        await eth.request({method:"wallet_addEthereumChain",params:[{
+          chainId:BASE_SEPOLIA.chainIdHex, chainName:BASE_SEPOLIA.chainName,
+          rpcUrls:BASE_SEPOLIA.rpcUrls, nativeCurrency:BASE_SEPOLIA.nativeCurrency,
+          blockExplorerUrls:BASE_SEPOLIA.blockExplorerUrls,
+        }]});
+      }
+    }
+  };
 
-  const showNotification = useCallback(
-    (message: string, type: "success" | "error" | "info", txHash?: string) => {
-      setNotification({ message, type, txHash });
-      setTimeout(() => setNotification(null), 6000);
-    },
-    []
-  );
+  // auto-detect account
+  useEffect(()=>{
+    const eth = getEthereum(); if(!eth) return;
+    eth.request({method:"eth_accounts"}).then((a)=>{
+      const accs = a as string[]; if(accs.length) setAccount(accs[0]);
+    }).catch(()=>{});
+    const h = (a:unknown)=>{ const accs=a as string[]; setAccount(accs[0]||null); setUser(null); };
+    eth.on("accountsChanged",h);
+    return ()=>{ eth.removeListener("accountsChanged",h); };
+  },[]);
 
-  // ─── Fetch Matches ─────────────────────────────────────────
+  // Auto-register user on wallet connect (no username prompt)
+  useEffect(()=>{
+    if(!account) return;
+    (async () => {
+      // Check if user exists
+      const res = await fetch(`/api/users/me?wallet=${account.toLowerCase()}`);
+      const data = await res.json();
+      if(data.user) { setUser(data.user); return; }
+      // Auto-register
+      const reg = await fetch("/api/users/register",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({walletAddress:account})});
+      const rd = await reg.json();
+      if(rd.user) { setUser(rd.user); notify("Welcome! Deposit USDC to start betting.","ok"); }
+    })().catch(()=>{});
+  },[account, notify]);
 
-  const fetchMatches = useCallback(async () => {
+  // ── deposit USDC ──
+  const depositUsdc = async () => {
+    if(!user||!account) return;
+    const amt = Number(depositAmt);
+    if(amt<=0) return notify("Invalid amount","err");
+    setDepositing(true);
+    try {
+      const eth = getEthereum(); if(!eth) throw new Error("No wallet");
+      // encode ERC-20 transfer(projectWallet, amount)
+      const to = user.projectWallet.slice(2).padStart(64,"0");
+      const val = BigInt(Math.floor(amt*10**USDC_DECIMALS)).toString(16).padStart(64,"0");
+      const data = ERC20_TRANSFER_ABI + to + val;
+
+      const txHash = await eth.request({method:"eth_sendTransaction",params:[{
+        from: account, to: USDC_ADDRESS, data,
+      }]}) as string;
+
+      notify("USDC transfer sent! Confirming...","info");
+
+      // record deposit
+      const r = await fetch("/api/deposit",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({userId:user.id,amount:amt,txHash})});
+      const d = await r.json();
+      if(d.success) {
+        setUser(prev=>prev?{...prev,balance:d.balance}:prev);
+        notify(`Deposited ${amt} USDC ✅`,"ok");
+        setShowDeposit(false);
+      }
+    } catch(e) { notify((e as Error).message||"Deposit failed","err"); }
+    setDepositing(false);
+  };
+
+  // ── fixtures ──
+  const fetchMatches = useCallback(async ()=>{
     setMatchesLoading(true);
     try {
-      const res = await fetch("/api/fixtures");
-      if (res.ok) {
-        const data = await res.json();
-        if (data.matches && Array.isArray(data.matches)) {
-          setMatches(data.matches);
-        }
-      }
-    } catch (error) {
-      console.error("Error fetching matches:", error);
-    }
+      const r = await fetch("/api/fixtures"); const d = await r.json();
+      if(d.matches) setMatches(d.matches);
+    } catch {}
     setMatchesLoading(false);
-  }, []);
+  },[]);
+  useEffect(()=>{ fetchMatches(); },[fetchMatches]);
 
-  useEffect(() => {
-    fetchMatches();
-  }, [fetchMatches]);
-
-  // ─── MetaMask Connection ────────────────────────────────────
-
-  const connectWallet = async () => {
-    const ethereum = getEthereum();
-    if (!ethereum) {
-      showNotification("Please install MetaMask to use GoalBet!", "error");
-      return;
-    }
-    setConnectingWallet(true);
-    try {
-      const accounts = (await ethereum.request({
-        method: "eth_requestAccounts",
-      })) as string[];
-      if (accounts.length > 0) {
-        setAccount(accounts[0]);
-        const chain = (await ethereum.request({
-          method: "eth_chainId",
-        })) as string;
-        setChainId(chain);
-
-        const contractInstance = new GoalBetContract(accounts[0], ethereum);
-        setContract(contractInstance);
-        showNotification(`Connected: ${shortenAddress(accounts[0])}`, "success");
+  // ── my bets + load market info ──
+  const fetchBets = useCallback(async ()=>{
+    if(!user) return;
+    const r = await fetch(`/api/bets?userId=${user.id}`); const d = await r.json();
+    if(d.bets) {
+      setMyBets(d.bets);
+      // Also load market info for each bet's market
+      const mr = await fetch("/api/markets"); const md = await mr.json();
+      if(md.markets) {
+        const cache: Record<string,MarketRow> = {};
+        for(const m of md.markets) cache[m.id] = m;
+        setMarketsCache(cache);
       }
-    } catch (error) {
-      console.error("Wallet connection error:", error);
-      showNotification("Failed to connect wallet", "error");
     }
-    setConnectingWallet(false);
+  },[user]);
+  useEffect(()=>{ if(user) fetchBets(); },[user,fetchBets]);
+
+  // ── leaderboard ──
+  const fetchLB = useCallback(async ()=>{
+    const r = await fetch("/api/leaderboard"); const d = await r.json();
+    if(d.leaderboard) setLeaderboard(d.leaderboard);
+  },[]);
+
+  // ── refresh user ──
+  const refreshUser = async () => {
+    if(!account) return;
+    const r = await fetch(`/api/users/me?wallet=${account.toLowerCase()}`);
+    const d = await r.json(); if(d.user) setUser(d.user);
   };
 
-  const switchToGenLayer = async () => {
-    const ethereum = getEthereum();
-    if (!ethereum) return;
-    try {
-      await ethereum.request({
-        method: "wallet_switchEthereumChain",
-        params: [{ chainId: GENLAYER_NETWORK.chainIdHex }],
-      });
-    } catch (switchError: unknown) {
-      if ((switchError as { code: number }).code === 4902) {
-        try {
-          await ethereum.request({
-            method: "wallet_addEthereumChain",
-            params: [
-              {
-                chainId: GENLAYER_NETWORK.chainIdHex,
-                chainName: GENLAYER_NETWORK.chainName,
-                rpcUrls: GENLAYER_NETWORK.rpcUrls,
-                nativeCurrency: GENLAYER_NETWORK.nativeCurrency,
-                blockExplorerUrls: GENLAYER_NETWORK.blockExplorerUrls,
-              },
-            ],
-          });
-        } catch {
-          showNotification("Failed to add GenLayer network", "error");
-        }
-      }
-    }
+  // ── market helpers ──
+  const mkid = (m:Match) => `${m.gameDate}_${m.team1}_${m.team2}`.toLowerCase().replace(/ /g,"-");
+
+  const getMarketForMatch = async (m:Match) => {
+    const id = mkid(m);
+    if(marketsCache[id]) return marketsCache[id];
+    const r = await fetch("/api/markets",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({id,gameDate:m.gameDate,team1:m.team1,team2:m.team2,
+        team1Code:m.team1Code,team2Code:m.team2Code,league:m.league,kickoffTime:m.kickoffTime})});
+    const d = await r.json();
+    if(d.market) { setMarketsCache(prev=>({...prev,[id]:d.market})); return d.market as MarketRow; }
+    return null;
   };
 
-  // Listen for account/chain changes
-  useEffect(() => {
-    const ethereum = getEthereum();
-    if (!ethereum) return;
-
-    const handleAccountsChanged = (accounts: unknown) => {
-      const accs = accounts as string[];
-      if (accs.length === 0) {
-        setAccount(null);
-        setContract(null);
-      } else {
-        setAccount(accs[0]);
-        const contractInstance = new GoalBetContract(accs[0], ethereum);
-        setContract(contractInstance);
-      }
-    };
-
-    const handleChainChanged = (chain: unknown) => {
-      setChainId(chain as string);
-    };
-
-    ethereum.on("accountsChanged", handleAccountsChanged);
-    ethereum.on("chainChanged", handleChainChanged);
-
-    // Check if already connected
-    ethereum
-      .request({ method: "eth_accounts" })
-      .then((accounts) => {
-        const accs = accounts as string[];
-        if (accs.length > 0) {
-          setAccount(accs[0]);
-          const contractInstance = new GoalBetContract(accs[0], ethereum);
-          setContract(contractInstance);
-        }
-      })
-      .catch(console.error);
-
-    ethereum
-      .request({ method: "eth_chainId" })
-      .then((chain) => setChainId(chain as string))
-      .catch(console.error);
-
-    return () => {
-      const eth = getEthereum();
-      eth?.removeListener("accountsChanged", handleAccountsChanged);
-      eth?.removeListener("chainChanged", handleChainChanged);
-    };
-  }, []);
-
-  // ─── Data Fetching ─────────────────────────────────────────
-
-  const fetchBets = useCallback(async () => {
-    if (!contract || !isCorrectNetwork) return;
-    setBetsLoading(true);
-    try {
-      const bets = await contract.getBets();
-      setMyBets(bets);
-    } catch (error) {
-      console.error("Error fetching bets:", error);
-    }
-    setBetsLoading(false);
-  }, [contract, isCorrectNetwork]);
-
-  const fetchLeaderboard = useCallback(async () => {
-    if (!contract || !isCorrectNetwork) return;
-    setLeaderboardLoading(true);
-    try {
-      const entries = await contract.getLeaderboard();
-      setLeaderboard(entries);
-    } catch (error) {
-      console.error("Error fetching leaderboard:", error);
-    }
-    setLeaderboardLoading(false);
-  }, [contract, isCorrectNetwork]);
-
-  const fetchMyStats = useCallback(async () => {
-    if (!contract || !account || !isCorrectNetwork) return;
-    try {
-      const stats = await contract.getPlayerStats(account);
-      setMyStats(stats);
-    } catch (error) {
-      console.error("Error fetching stats:", error);
-    }
-  }, [contract, account, isCorrectNetwork]);
-
-  const fetchGenBalance = useCallback(async () => {
-    const ethereum = getEthereum();
-    if (!ethereum || !account || !isCorrectNetwork) return;
-    try {
-      const balance = (await ethereum.request({
-        method: "eth_getBalance",
-        params: [account, "latest"],
-      })) as string;
-      const balanceInGEN = parseInt(balance, 16) / 1e18;
-      setGenBalance(balanceInGEN.toFixed(4));
-    } catch (error) {
-      console.error("Error fetching balance:", error);
-    }
-  }, [account, isCorrectNetwork]);
-
-  const fetchPoolInfo = useCallback(async () => {
-    try {
-      // Prefer server API (works without MetaMask / contract)
-      const res = await fetch("/api/pool");
-      if (res.ok) {
-        const data = await res.json();
-        setPoolInfo({
-          total_pool: data.poolBalance,
-          total_pending_payouts: data.pendingPayouts,
-          available_liquidity: data.availableLiquidity,
-        });
-        return;
-      }
-    } catch {
-      // fall through
-    }
-    // Fallback: try on-chain contract if available
-    if (!contract || !isCorrectNetwork) return;
-    try {
-      const info = await contract.getPoolInfo();
-      setPoolInfo(info);
-    } catch (error) {
-      console.error("Error fetching pool info:", error);
-    }
-  }, [contract, isCorrectNetwork]);
-
-  // Initial data load
-  useEffect(() => {
-    if (contract && isCorrectNetwork) {
-      fetchGenBalance();
-      fetchBets();
-      fetchLeaderboard();
-      fetchMyStats();
-      fetchPoolInfo();
-    }
-  }, [contract, isCorrectNetwork, fetchGenBalance, fetchBets, fetchLeaderboard, fetchMyStats, fetchPoolInfo]);
-
-  // Refresh when tab changes
-  useEffect(() => {
-    if (!contract || !isCorrectNetwork) return;
-    if (activeTab === "mybets") {
-      fetchBets();
-      fetchMyStats();
-    } else if (activeTab === "leaderboard") {
-      fetchLeaderboard();
-    }
-  }, [activeTab, contract, isCorrectNetwork, fetchBets, fetchMyStats, fetchLeaderboard]);
-
-  // Refresh balance periodically
-  useEffect(() => {
-    if (!isCorrectNetwork || !account) return;
-    const interval = setInterval(fetchGenBalance, 10000);
-    return () => clearInterval(interval);
-  }, [isCorrectNetwork, account, fetchGenBalance]);
-
-  // ─── Actions ───────────────────────────────────────────────
-
-  const handlePlaceBet = async () => {
-    if (!betModal || !contract || !isCorrectNetwork) return;
-
-    const stake = Number(stakeAmount);
-    if (isNaN(stake) || stake < 1) {
-      showNotification("Minimum stake is 1 GEN", "error");
-      return;
-    }
-    if (stake > Number(genBalance)) {
-      showNotification("Insufficient GEN balance. Get more from faucet!", "error");
-      return;
-    }
-
+  // ── place bet ──
+  const placeBet = async () => {
+    if(!user||!betModal) return;
+    const amt = Number(stakeAmount);
+    if(amt<1) return notify("Min bet is 1 USDC","err");
+    if(amt>Number(user.balance)) return notify("Insufficient balance","err");
     setLoading(true);
     try {
-      const { match, selection } = betModal;
-      const predictedWinner =
-        selection === "team1" ? "1" : selection === "team2" ? "2" : "0";
+      const mkt = await getMarketForMatch(betModal.match);
+      if(!mkt) throw new Error("Could not create market");
 
-      const odds =
-        selection === "team1"
-          ? match.oddsTeam1
-          : selection === "team2"
-            ? match.oddsTeam2
-            : match.oddsDraw;
-      const oddsMultiplied = Math.round(odds * 100);
-
-      const { txHash } = await contract.createBet(
-        match.gameDate,
-        match.team1,
-        match.team2,
-        predictedWinner,
-        stake,
-        oddsMultiplied
-      );
-
-      showNotification(`Bet ${stake} GEN placed on-chain! 🎯`, "success", txHash);
-      setBetModal(null);
-      setStakeAmount("10");
-      await Promise.all([fetchBets(), fetchGenBalance(), fetchLeaderboard(), fetchMyStats(), fetchPoolInfo()]);
-      setActiveTab("mybets");
-    } catch (error: unknown) {
-      const errMsg = (error as Error).message || "Transaction failed";
-      if (errMsg.includes("already exists")) {
-        showNotification("You already have a bet on this match", "error");
-      } else if (errMsg.includes("Insufficient pool liquidity")) {
-        showNotification("Pool has insufficient liquidity for this bet. Wait for more deposits.", "error");
-      } else if (errMsg.includes("Minimum stake")) {
-        showNotification("Minimum stake is 1 GEN", "error");
-      } else {
-        showNotification(errMsg.slice(0, 100), "error");
-      }
-    }
+      const r = await fetch("/api/bets",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({userId:user.id,marketId:mkt.id,outcome:betModal.selection,amount:amt})});
+      const d = await r.json();
+      if(d.success) {
+        notify(`Bet ${amt} USDC placed! 🎯`,"ok");
+        setBetModal(null); setStakeAmount("5");
+        await refreshUser(); await fetchBets();
+        setActiveTab("mybets");
+      } else notify(d.error||"Bet failed","err");
+    } catch(e) { notify((e as Error).message,"err"); }
     setLoading(false);
   };
 
-  const handleResolveBet = async (betId: string) => {
-    if (!contract || !isCorrectNetwork) return;
-    setResolvingBet(betId);
+  // ── resolve (server-side, no MetaMask needed for GenLayer) ──
+  const [resolving, setResolving] = useState<string|null>(null);
+  const resolveMarket = async (marketId:string) => {
+    setResolving(marketId);
+    notify("🤖 Calling GenLayer AI Oracle — this may take a minute...","info");
     try {
-      const { txHash } = await contract.resolveBet(betId);
-      showNotification("Bet resolved via AI Oracle! 🤖", "success", txHash);
-      await Promise.all([fetchBets(), fetchMyStats(), fetchLeaderboard(), fetchGenBalance(), fetchPoolInfo()]);
-    } catch (error: unknown) {
-      const errMsg = (error as Error).message || "Resolution failed";
-      if (errMsg.includes("not finished")) {
-        showNotification("Match has not finished yet", "error");
-      } else if (errMsg.includes("already resolved")) {
-        showNotification("Bet already resolved", "error");
+      const r = await fetch("/api/resolve",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({marketId})});
+      const d = await r.json();
+
+      if(d.success) {
+        notify(`✅ Resolved! Score: ${d.score}`,"ok");
+        // Refresh bets and markets
+        await fetchBets();
+        // Reload markets cache
+        const mr = await fetch("/api/markets"); const md = await mr.json();
+        if(md.markets) {
+          const cache: Record<string,MarketRow> = {};
+          for(const m of md.markets) cache[m.id] = m;
+          setMarketsCache(cache);
+        }
       } else {
-        showNotification(errMsg.slice(0, 100), "error");
+        notify(d.error||"Match not finished yet","err");
       }
-    }
-    setResolvingBet(null);
+    } catch(e) { notify((e as Error).message||"Resolution failed","err"); }
+    setResolving(null);
   };
 
-  const handleClaimWinnings = async (betId: string) => {
-    if (!contract || !isCorrectNetwork) return;
-    setClaimingBet(betId);
+  // ── claim ──
+  const [claiming, setClaiming] = useState<string|null>(null);
+  const claimBet = async (betId:string) => {
+    if(!user) return;
+    setClaiming(betId);
     try {
-      const { txHash } = await contract.claimWinnings(betId);
-      showNotification("🎉 Winnings claimed! GEN transferred to your wallet!", "success", txHash);
-      await Promise.all([fetchBets(), fetchMyStats(), fetchLeaderboard(), fetchGenBalance(), fetchPoolInfo()]);
-    } catch (error: unknown) {
-      const errMsg = (error as Error).message || "Claim failed";
-      if (errMsg.includes("already claimed")) {
-        showNotification("Winnings already claimed", "error");
-      } else if (errMsg.includes("not won")) {
-        showNotification("Bet was not won, nothing to claim", "error");
-      } else if (errMsg.includes("not been resolved")) {
-        showNotification("Resolve the bet first before claiming", "error");
-      } else {
-        showNotification(errMsg.slice(0, 100), "error");
-      }
-    }
-    setClaimingBet(null);
+      const r = await fetch("/api/bets/claim",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({betId,userId:user.id})});
+      const d = await r.json();
+      if(d.success) {
+        if(d.isWon) notify(`Won ${d.payout} USDC! 🎉`,"ok");
+        else notify("Bet lost ❌","err");
+        await refreshUser(); await fetchBets();
+      } else notify(d.error,"err");
+    } catch(e) { notify((e as Error).message,"err"); }
+    setClaiming(null);
   };
 
-  // Check if user has bet on a match
-  const hasBetOnMatch = (match: Match): boolean => {
-    const betId = generateBetId(match.gameDate, match.team1, match.team2);
-    return betId in myBets;
-  };
-
-  // Group matches by date
+  const hasBet = (m:Match) => myBets.some(b=>b.marketId===mkid(m));
   const matchesByDate = groupMatchesByDate(matches);
 
-  // ─── NOT CONNECTED SCREEN ───────────────────────────────────
-
-  if (!account) {
-    return (
-      <div className="min-h-screen flex items-center justify-center p-4">
-        <div className="text-center max-w-lg animate-fade-in">
-          <div className="mb-8">
-            <div className="text-6xl mb-4">⚽</div>
-            <h1 className="text-5xl font-bold gradient-text mb-2">GoalBet</h1>
-            <p className="text-silver text-lg">On-Chain Football Predictions</p>
-          </div>
-
-          <div className="glass-card p-8 mb-6">
-            <p className="text-lg mb-2">💰 Bet GEN tokens on real football matches</p>
-            <p className="text-silver mb-2">🤖 Powered by GenLayer AI Consensus</p>
-            <p className="text-silver">🏦 Solvent pool with funded payouts</p>
-          </div>
-
-          <button
-            onClick={connectWallet}
-            disabled={connectingWallet}
-            className="px-8 py-4 rounded-xl bg-gradient-to-r from-primary to-primary-dark text-white text-lg font-bold hover:opacity-90 transition-all animate-pulse-glow disabled:opacity-50"
-          >
-            {connectingWallet ? "Connecting..." : "🦊 Connect MetaMask"}
-          </button>
-
-          {!hasMetaMask && (
-            <p className="mt-4 text-sm text-danger">
-              MetaMask not detected. Please install it to continue.
-            </p>
-          )}
-
-          <p className="mt-4 text-sm text-silver">
-            Get GEN from{" "}
-            <a href={FAUCET_URL} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
-              GenLayer Faucet
-            </a>
-          </p>
+  // ═══════════════ NOT CONNECTED ═══════════════
+  if(!account) return (
+    <div className="min-h-screen flex items-center justify-center p-4">
+      <div className="text-center max-w-lg animate-fade-in">
+        <div className="text-6xl mb-4">⚽</div>
+        <h1 className="text-5xl font-bold gradient-text mb-2">GoalBet</h1>
+        <p className="text-silver text-lg mb-8">On-Chain Football Predictions</p>
+        <div className="glass-card p-6 mb-6 text-left space-y-2">
+          <p>💰 Bet USDC on real football matches (Base Sepolia)</p>
+          <p>🤖 AI Oracle resolves results via GenLayer</p>
+          <p>📊 Polymarket-style pari-mutuel pools</p>
+          <p>🏆 Winners split the entire pool</p>
         </div>
+        <button onClick={connect} className="px-8 py-4 rounded-xl bg-gradient-to-r from-primary to-primary-dark text-white text-lg font-bold hover:opacity-90 animate-pulse-glow">
+          🦊 Connect MetaMask
+        </button>
+        <p className="mt-3 text-xs text-silver">Network: Base Sepolia • Currency: USDC</p>
       </div>
-    );
-  }
-
-  // ─── WRONG NETWORK BANNER ───────────────────────────────────
-
-  const wrongNetworkBanner = !isCorrectNetwork && (
-    <div className="bg-warning/20 border border-warning text-warning px-4 py-3 flex items-center justify-between">
-      <div className="flex items-center gap-2">
-        <span>⚠️</span>
-        <span>Wrong network: {getNetworkLabel(chainId)}</span>
-      </div>
-      <button onClick={switchToGenLayer} className="px-4 py-1.5 rounded-lg bg-warning text-black text-sm font-bold hover:opacity-90">
-        Switch to GenLayer
-      </button>
     </div>
   );
 
-  // ─── MAIN APP ────────────────────────────────────────────────
+  // ═══════════════ LOADING (auto-registering) ═══════════════
+  if(!user) return (
+    <div className="min-h-screen flex items-center justify-center p-4">
+      <div className="text-center max-w-md animate-fade-in">
+        <div className="text-5xl mb-4 animate-pulse">⚽</div>
+        <h2 className="text-2xl font-bold mb-2">Setting up your account...</h2>
+        <p className="text-silver">{shortenAddress(account)}</p>
+      </div>
+    </div>
+  );
 
+  // ═══════════════ MAIN APP ═══════════════
   return (
     <div className="min-h-screen pb-20">
-      {/* Notification */}
-      {notification && (
-        <div
-          className={`fixed top-4 right-4 z-50 px-6 py-3 rounded-xl shadow-lg animate-slide-up max-w-sm ${
-            notification.type === "success"
-              ? "bg-accent/20 border border-accent text-accent"
-              : notification.type === "error"
-                ? "bg-danger/20 border border-danger text-danger"
-                : "bg-primary/20 border border-primary text-primary"
-          }`}
-        >
-          <div>{notification.message}</div>
-          {notification.txHash && (
-            <a
-              href={`${EXPLORER_TX_URL}${notification.txHash}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-xs underline mt-1 block"
-            >
-              View on Explorer →
-            </a>
-          )}
-        </div>
-      )}
+      {/* notification */}
+      {note && <div className={`fixed top-4 right-4 z-50 px-5 py-3 rounded-xl shadow-lg animate-slide-up max-w-sm ${note.type==="ok"?"bg-accent/20 border border-accent text-accent":note.type==="err"?"bg-danger/20 border border-danger text-danger":"bg-primary/20 border border-primary text-primary"}`}>{note.msg}</div>}
 
-      {/* Wrong Network Banner */}
-      {wrongNetworkBanner}
-
-      {/* Header */}
+      {/* header */}
       <header className="sticky top-0 z-40 bg-bg/80 backdrop-blur-xl border-b border-surface-lighter">
         <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className="text-2xl">⚽</span>
             <span className="text-xl font-bold gradient-text">GoalBet</span>
-            {isCorrectNetwork && (
-              <span className="text-xs px-2 py-0.5 rounded-full bg-primary/20 text-primary">
-                StudioNet
+            <span className="text-xs px-2 py-0.5 rounded-full bg-primary/20 text-primary">Base Sepolia</span>
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1.5 bg-surface-light rounded-lg px-3 py-1.5 cursor-pointer" onClick={()=>setShowDeposit(true)}>
+              <span className="text-lg font-bold text-accent">{Number(user.balance).toFixed(2)}</span>
+              <span className="text-xs text-silver">USDC</span>
+              <span className="text-primary ml-1">+</span>
+            </div>
+            {user.wins+user.losses>0 && (
+              <span className={`text-sm ${user.wins>user.losses?"text-accent":"text-danger"}`}>
+                {user.wins}W/{user.losses}L
               </span>
             )}
-          </div>
-
-          <div className="flex items-center gap-3">
-            {/* Pool Info */}
-            {poolInfo && isCorrectNetwork && (
-              <div className="hidden sm:flex items-center gap-1 bg-surface-light rounded-lg px-3 py-1.5">
-                <span className="text-xs text-silver">Pool:</span>
-                <span className="text-sm font-bold text-warning">
-                  {weiToGEN(poolInfo.available_liquidity).toFixed(1)}
-                </span>
-                <span className="text-xs text-silver">GEN</span>
-              </div>
-            )}
-            {/* GEN Balance */}
-            <div className="flex items-center gap-1.5 bg-surface-light rounded-lg px-3 py-1.5">
-              <span className="text-lg font-bold text-accent">{genBalance}</span>
-              <span className="text-xs text-silver">GEN</span>
-              <a href={FAUCET_URL} target="_blank" rel="noopener noreferrer" className="text-primary hover:text-white ml-1" title="Get GEN from faucet">
-                +
-              </a>
-            </div>
-            {/* Total Won */}
-            {myStats && myStats.total_won > 0 && (
-              <div className="hidden sm:flex items-center gap-1 text-accent text-sm">
-                +{weiToGEN(myStats.total_won).toFixed(1)} won
-              </div>
-            )}
-            {/* Win Rate */}
-            {myStats && myStats.total_bets > 0 && (
-              <div className="hidden sm:flex items-center gap-1 text-sm">
-                <span className={myStats.wins > myStats.losses ? "text-accent" : "text-danger"}>
-                  {myStats.wins}W/{myStats.losses}L
-                </span>
-              </div>
-            )}
-            {/* Wallet */}
-            <a
-              href={`https://explorer-studio.genlayer.com/address/${account}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-1.5 bg-surface-light rounded-lg px-3 py-1.5 hover:border-primary border border-transparent transition-colors"
-            >
-              <span className="text-xs text-silver">{shortenAddress(account)}</span>
-            </a>
+            <span className="text-xs text-silver bg-surface-light rounded-lg px-3 py-1.5">
+              {shortenAddress(user.walletAddress)}
+            </span>
           </div>
         </div>
       </header>
 
-      {/* Tabs */}
-      <div className="max-w-5xl mx-auto px-4 mt-4">
-        <div className="flex gap-2">
-          {(["matches", "mybets", "leaderboard"] as const).map((tab) => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={`px-5 py-2 rounded-xl text-sm font-medium transition-all ${
-                activeTab === tab ? "tab-active" : "tab-inactive"
-              }`}
-            >
-              {tab === "matches"
-                ? "⚽ Matches"
-                : tab === "mybets"
-                  ? "🎯 My Bets"
-                  : "🏆 Leaderboard"}
-            </button>
-          ))}
-        </div>
+      {/* tabs */}
+      <div className="max-w-5xl mx-auto px-4 mt-4 flex gap-2">
+        {(["matches","mybets","leaderboard"] as const).map(t=>(
+          <button key={t} onClick={()=>{setActiveTab(t);if(t==="leaderboard")fetchLB();if(t==="mybets")fetchBets();}}
+            className={`px-5 py-2 rounded-xl text-sm font-medium transition-all ${activeTab===t?"tab-active":"tab-inactive"}`}>
+            {t==="matches"?"⚽ Matches":t==="mybets"?"🎯 My Bets":"🏆 Leaderboard"}
+          </button>
+        ))}
       </div>
 
-      {/* Content */}
-      <main className="max-w-5xl mx-auto px-4 mt-6">
-        {/* ── MATCHES TAB ──────────────────────────────────── */}
-        {activeTab === "matches" && (
-          <div>
-            {/* Pool & refresh bar */}
-            <div className="flex items-center justify-between mb-4">
-              <span className="text-silver text-sm">
-                {matches.length} upcoming matches
-                {poolInfo && isCorrectNetwork && (
-                  <span className="ml-2">
-                    • Pool liquidity: <span className="text-warning">{weiToGEN(poolInfo.available_liquidity).toFixed(1)}</span> GEN
+       <main className="max-w-5xl mx-auto px-4 mt-6">
+        {/* ── MATCHES ── */}
+        {activeTab==="matches" && (
+          <div className="space-y-6">
+            {/* header bar */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <span className="text-silver">{matches.length} matches</span>
+                {matches.some(m=>m.status==="IN_PLAY"||m.status==="PAUSED") && (
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-danger/20 text-danger animate-pulse">
+                    🔴 {matches.filter(m=>m.status==="IN_PLAY"||m.status==="PAUSED").length} LIVE
                   </span>
                 )}
-              </span>
-              <button onClick={fetchMatches} className="text-sm text-primary hover:text-white transition-colors">
-                🔄 Refresh
+              </div>
+              <button onClick={fetchMatches} className="flex items-center gap-1 text-sm text-primary hover:underline">
+                <span>↻</span> Refresh
               </button>
             </div>
 
-            {matchesLoading && matches.length === 0 ? (
-              <div className="text-center py-20 text-silver">
-                <div className="text-4xl mb-4 animate-pulse">⚽</div>
-                Loading live fixtures...
+            {matchesLoading&&!matches.length ? (
+              <div className="glass-card p-8 text-center">
+                <div className="text-4xl mb-2 animate-pulse">⚽</div>
+                <p className="text-silver">Loading live fixtures from football-data.org...</p>
               </div>
-            ) : matches.length === 0 ? (
-              <div className="text-center py-20 text-silver">
-                <div className="text-6xl mb-4">⚽</div>
-                <h3 className="text-xl font-bold text-white mb-2">No upcoming matches</h3>
-                <p>Check back later!</p>
-              </div>
-            ) : (
-              Object.entries(matchesByDate).map(([date, dateMatches]) => (
-                <div key={date} className="mb-8">
-                  <div className="flex items-center gap-2 mb-3">
-                    <div className="h-px flex-1 bg-surface-lighter" />
-                    <span className="text-sm text-silver px-2">{formatDateHeader(date)}</span>
-                    <div className="h-px flex-1 bg-surface-lighter" />
-                  </div>
-                  <div className="space-y-3">
-                    {dateMatches.map((match) => {
-                      const betPlaced = hasBetOnMatch(match);
-                      const timeUntil = getTimeUntilMatch(match.kickoffTime);
-                      const isLive = timeUntil === "LIVE";
-
-                      return (
-                        <div key={match.id} className="glass-card p-4">
-                          <div className="flex items-center justify-between mb-3">
-                            <span className="text-xs text-silver">{match.league}</span>
-                            <div className="flex items-center gap-2">
-                              {isLive && (
-                                <span className="text-xs px-2 py-0.5 rounded-full bg-danger/20 text-danger font-bold">LIVE</span>
-                              )}
-                              {!isLive && timeUntil && (
-                                <span className="text-xs text-silver">{timeUntil}</span>
-                              )}
-                            </div>
-                          </div>
-                          <div className="flex items-center justify-between mb-4">
-                            <div className="flex items-center gap-3 flex-1">
-                              <TeamLogo teamCode={match.team1Code} teamName={match.team1} size="md" />
-                              <span className="font-medium text-sm">{match.team1}</span>
-                            </div>
-                            <div className="px-4">
-                              {match.score ? (
-                                <span className="text-xl font-bold">{match.score}</span>
-                              ) : (
-                                <span className="text-sm text-silver font-bold">VS</span>
-                              )}
-                            </div>
-                            <div className="flex items-center gap-3 flex-1 justify-end">
-                              <span className="font-medium text-sm">{match.team2}</span>
-                              <TeamLogo teamCode={match.team2Code} teamName={match.team2} size="md" />
-                            </div>
-                          </div>
-                          <div className="grid grid-cols-3 gap-2">
-                            <button
-                              onClick={() => !betPlaced && setBetModal({ match, selection: "team1" })}
-                              disabled={betPlaced || !isCorrectNetwork}
-                              className={`py-2.5 rounded-xl text-center transition-all ${
-                                betPlaced || !isCorrectNetwork
-                                  ? "bg-surface-lighter/50 text-silver cursor-not-allowed"
-                                  : "bg-surface-light hover:bg-primary/20 hover:border-primary border border-transparent cursor-pointer"
-                              }`}
-                            >
-                              <div className="text-xs text-silver mb-0.5">1</div>
-                              <div className="font-bold">{match.oddsTeam1.toFixed(2)}</div>
-                            </button>
-                            <button
-                              onClick={() => !betPlaced && setBetModal({ match, selection: "draw" })}
-                              disabled={betPlaced || !isCorrectNetwork}
-                              className={`py-2.5 rounded-xl text-center transition-all ${
-                                betPlaced || !isCorrectNetwork
-                                  ? "bg-surface-lighter/50 text-silver cursor-not-allowed"
-                                  : "bg-surface-light hover:bg-warning/20 hover:border-warning border border-transparent cursor-pointer"
-                              }`}
-                            >
-                              <div className="text-xs text-silver mb-0.5">X</div>
-                              <div className="font-bold">{match.oddsDraw.toFixed(2)}</div>
-                            </button>
-                            <button
-                              onClick={() => !betPlaced && setBetModal({ match, selection: "team2" })}
-                              disabled={betPlaced || !isCorrectNetwork}
-                              className={`py-2.5 rounded-xl text-center transition-all ${
-                                betPlaced || !isCorrectNetwork
-                                  ? "bg-surface-lighter/50 text-silver cursor-not-allowed"
-                                  : "bg-surface-light hover:bg-primary/20 hover:border-primary border border-transparent cursor-pointer"
-                              }`}
-                            >
-                              <div className="text-xs text-silver mb-0.5">2</div>
-                              <div className="font-bold">{match.oddsTeam2.toFixed(2)}</div>
-                            </button>
-                          </div>
-                          {betPlaced && (
-                            <div className="mt-2 text-center text-sm text-accent">✅ Bet placed on-chain</div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
+            ) : !matches.length ? (
+              <div className="glass-card p-8 text-center"><p>No upcoming matches</p></div>
+            ) : Object.entries(matchesByDate).map(([date,dm])=>(
+              <div key={date}>
+                {/* date header */}
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="text-lg font-semibold">{formatDateHeader(date)}</span>
+                  <span className="text-xs text-silver">• {(dm as Match[]).length} matches</span>
                 </div>
-              ))
-            )}
-          </div>
-        )}
-
-        {/* ── MY BETS TAB ──────────────────────────────────── */}
-        {activeTab === "mybets" && (
-          <div>
-            <div className="flex items-center justify-between mb-4">
-              <span className="text-silver text-sm">
-                {Object.keys(myBets).length} bet{Object.keys(myBets).length !== 1 ? "s" : ""}
-              </span>
-              <button onClick={fetchBets} className="text-sm text-primary hover:text-white transition-colors">
-                🔄 Refresh
-              </button>
-            </div>
-
-            {betsLoading && Object.keys(myBets).length === 0 && (
-              <div className="text-center py-20 text-silver">
-                <div className="text-4xl mb-4 animate-pulse">🎯</div>
-                Loading your bets from blockchain...
-              </div>
-            )}
-
-            {!betsLoading && Object.keys(myBets).length === 0 ? (
-              <div className="text-center py-20 text-silver">
-                <div className="text-6xl mb-4">🎯</div>
-                <h3 className="text-xl font-bold text-white mb-2">No bets placed yet</h3>
-                <p>Go to Matches to start betting!</p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {Object.entries(myBets).map(([betId, bet]) => {
-                  const stakeGEN = bet.stake ? weiToGEN(Number(bet.stake)) : 0;
-                  const payoutGEN = bet.payout ? weiToGEN(Number(bet.payout)) : 0;
-                  const oddsValue = bet.odds ? Number(bet.odds) / 100 : 0;
-                  const team1Code = getTeamCodeFromName(bet.team1);
-                  const team2Code = getTeamCodeFromName(bet.team2);
-
-                  return (
-                    <div key={betId} className="glass-card p-4">
-                      {/* Match info */}
-                      <div className="flex items-center justify-between mb-3">
-                        <div className="flex items-center gap-3">
-                          <TeamLogo teamCode={team1Code} teamName={bet.team1} size="sm" />
-                          <span className="text-sm text-silver">vs</span>
-                          <TeamLogo teamCode={team2Code} teamName={bet.team2} size="sm" />
-                        </div>
-                        <div className="text-right">
-                          <div className="text-sm font-medium">{bet.team1} vs {bet.team2}</div>
-                          <div className="text-xs text-silver">{bet.game_date}</div>
-                        </div>
-                      </div>
-
-                      {/* Prediction & Stake */}
-                      <div className="grid grid-cols-3 gap-3 mb-3">
-                        <div>
-                          <div className="text-xs text-silver">Prediction</div>
-                          <div className="text-sm font-medium text-primary">
-                            {bet.predicted_winner === "1" ? bet.team1 : bet.predicted_winner === "2" ? bet.team2 : "Draw"}
-                          </div>
-                        </div>
-                        <div>
-                          <div className="text-xs text-silver">Stake</div>
-                          <div className="text-sm font-medium">{stakeGEN.toFixed(2)} GEN</div>
-                          {oddsValue > 0 && <div className="text-xs text-silver">{oddsValue.toFixed(2)}x</div>}
-                        </div>
-                        <div>
-                          <div className="text-xs text-silver">
-                            {bet.has_resolved && bet.is_won ? "Won" : "Potential"}
-                          </div>
-                          <div className="text-sm font-bold text-accent">{payoutGEN.toFixed(2)} GEN</div>
-                        </div>
-                      </div>
-
-                      {/* Status + Actions */}
-                      <div className="flex items-center justify-between">
-                        <div>
-                          {!bet.has_resolved ? (
-                            <span className="text-xs px-2 py-1 rounded-full bg-warning/20 text-warning">⏳ Pending</span>
-                          ) : bet.is_won ? (
-                            <span className="text-xs px-2 py-1 rounded-full bg-accent/20 text-accent">
-                              🎉 Won
-                              {bet.has_claimed && " ✅ Claimed"}
-                            </span>
-                          ) : (
-                            <span className="text-xs px-2 py-1 rounded-full bg-danger/20 text-danger">❌ Lost</span>
-                          )}
-                        </div>
-
-                        <div className="flex gap-2">
-                          {/* Resolve button */}
-                          {!bet.has_resolved && (
-                            <button
-                              onClick={() => handleResolveBet(betId)}
-                              disabled={resolvingBet === betId}
-                              className="px-4 py-2 rounded-xl bg-primary/20 text-primary text-sm font-medium hover:bg-primary/30 transition-colors disabled:opacity-50"
-                            >
-                              {resolvingBet === betId ? "🤖 Resolving..." : "🤖 Resolve"}
-                            </button>
-                          )}
-
-                          {/* Claim winnings button (FUNDED PAYOUT PATH) */}
-                          {bet.has_resolved && bet.is_won && !bet.has_claimed && (
-                            <button
-                              onClick={() => handleClaimWinnings(betId)}
-                              disabled={claimingBet === betId}
-                              className="px-4 py-2 rounded-xl bg-accent/20 text-accent text-sm font-bold hover:bg-accent/30 transition-colors disabled:opacity-50 animate-pulse-glow"
-                            >
-                              {claimingBet === betId ? "💰 Claiming..." : "💰 Claim Winnings"}
-                            </button>
-                          )}
-                        </div>
-
-                        {/* Score if resolved */}
-                        {bet.has_resolved && bet.real_score && (
-                          <div className="text-sm text-silver">
-                            Final: <span className="text-white font-bold">{bet.real_score}</span>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ── LEADERBOARD TAB ──────────────────────────────── */}
-        {activeTab === "leaderboard" && (
-          <div>
-            <div className="glass-card p-6 mb-6">
-              <h2 className="text-xl font-bold mb-1">🏆 Top Winners</h2>
-              <p className="text-sm text-silver">Ranked by total GEN won from correct predictions</p>
-            </div>
-
-            {leaderboardLoading && leaderboard.length === 0 && (
-              <div className="text-center py-20 text-silver">
-                <div className="text-4xl mb-4 animate-pulse">🏆</div>
-                Loading leaderboard from blockchain...
-              </div>
-            )}
-
-            {!leaderboardLoading && leaderboard.length === 0 ? (
-              <div className="text-center py-20 text-silver">
-                <div className="text-6xl mb-4">🏆</div>
-                <h3 className="text-xl font-bold text-white mb-2">No bets resolved yet</h3>
-                <p>Be the first to win!</p>
-              </div>
-            ) : (
-              <>
-                <div className="grid grid-cols-6 gap-2 px-4 py-2 text-xs text-silver mb-2">
-                  <div>#</div><div>Player</div><div>Won</div><div>Staked</div><div>Profit</div><div>W/L</div>
-                </div>
-                <div className="space-y-2">
-                  {leaderboard.map((entry, index) => {
-                    const totalWonGEN = weiToGEN(entry.total_won);
-                    const totalStakedGEN = weiToGEN(entry.total_staked);
-                    const netProfitGEN = weiToGEN(entry.profit);
+                <div className="grid gap-3">
+                  {(dm as Match[]).map((m:Match)=>{
+                    const bp=hasBet(m);
+                    const tu=getTimeUntilMatch(m.kickoffTime);
+                    const isLive = m.status==="IN_PLAY"||m.status==="PAUSED";
+                    const isFinished = m.status==="FINISHED"||tu==="FT";
+                    const canBet = !bp && !isLive && !isFinished;
+                    const li = LEAGUE_INFO[m.league];
 
                     return (
-                      <div key={entry.address} className="glass-card p-4 grid grid-cols-6 gap-2 items-center">
-                        <div className="text-lg">
-                          {index === 0 ? "🥇" : index === 1 ? "🥈" : index === 2 ? "🥉" : <span className="text-silver">#{index + 1}</span>}
+                      <div key={m.id} className={`glass-card p-4 ${isLive?"border-danger/40":""}`}>
+                        {/* top row: league + time info */}
+                        <div className="flex items-center justify-between mb-3">
+                          <div className="flex items-center gap-2">
+                            {li && <span className="text-sm">{li.emoji}</span>}
+                            <span className="text-xs text-silver font-medium">{m.league}</span>
+                            {m.matchday && <span className="text-xs text-surface-lighter">MD {m.matchday}</span>}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            {isLive ? (
+                              <div className="flex items-center gap-1.5">
+                                <span className="relative flex h-2 w-2">
+                                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-danger opacity-75"></span>
+                                  <span className="relative inline-flex rounded-full h-2 w-2 bg-danger"></span>
+                                </span>
+                                <span className="text-xs font-bold text-danger">
+                                  {m.status==="PAUSED"?"HT":m.elapsed?`${m.elapsed}'`:"LIVE"}
+                                </span>
+                              </div>
+                            ) : isFinished ? (
+                              <span className="text-xs px-2 py-0.5 rounded-full bg-surface-lighter text-silver">FT</span>
+                            ) : (
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-xs font-mono text-white">{formatKickoffTime(m.kickoffTime)}</span>
+                                {tu && <span className="text-xs text-silver">({tu})</span>}
+                              </div>
+                            )}
+                          </div>
                         </div>
-                        <a
-                          href={`https://explorer-studio.genlayer.com/address/${entry.address}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-sm font-medium truncate hover:text-primary transition-colors"
-                        >
-                          {shortenAddress(entry.address)}
-                        </a>
-                        <div>
-                          <div className="text-sm font-bold text-accent">{totalWonGEN.toFixed(1)}</div>
-                          <div className="text-xs text-silver">GEN</div>
+
+                        {/* teams + score */}
+                        <div className="flex items-center justify-between mb-1">
+                          <div className="flex items-center gap-2 flex-1">
+                            <TeamLogo teamCode={m.team1Code} teamName={m.team1} size="md"/>
+                            <span className="font-medium text-sm sm:text-base">{m.team1}</span>
+                          </div>
+                          <div className="flex flex-col items-center px-4 min-w-[60px]">
+                            {m.score ? (
+                              <span className={`text-xl font-bold ${isLive?"text-danger":"text-white"}`}>{m.score}</span>
+                            ) : (
+                              <span className="text-lg text-surface-lighter font-bold">vs</span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2 flex-1 justify-end">
+                            <span className="font-medium text-sm sm:text-base">{m.team2}</span>
+                            <TeamLogo teamCode={m.team2Code} teamName={m.team2} size="md"/>
+                          </div>
                         </div>
-                        <div className="text-sm text-silver">{totalStakedGEN.toFixed(1)}</div>
-                        <div className={`text-sm font-bold ${netProfitGEN >= 0 ? "text-accent" : "text-danger"}`}>
-                          {netProfitGEN >= 0 ? "+" : ""}{netProfitGEN.toFixed(1)}
-                        </div>
-                        <div className="text-sm text-silver">
-                          <span className="text-accent">{entry.wins}</span>/<span className="text-danger">{entry.losses}</span>
-                        </div>
+
+                        {/* venue */}
+                        {m.venue && (
+                          <p className="text-center text-xs text-surface-lighter mb-3">🏟 {m.venue}</p>
+                        )}
+
+                        {/* odds / bet buttons */}
+                        {!isFinished && (
+                          <div className="grid grid-cols-3 gap-2 mt-3">
+                            {[{label:"Home",oc:1,odds:m.oddsTeam1,c:"text-accent"},
+                              {label:"Draw",oc:0,odds:m.oddsDraw,c:"text-warning"},
+                              {label:"Away",oc:2,odds:m.oddsTeam2,c:"text-primary"}].map(o=>(
+                              <button key={o.oc} onClick={()=>setBetModal({match:m,selection:o.oc})} disabled={!canBet}
+                                className="flex flex-col items-center p-3 rounded-xl bg-surface-light hover:bg-surface-lighter transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                                <span className="text-xs text-silver">{o.label}</span>
+                                <span className={`text-lg font-bold ${o.c}`}>{o.odds.toFixed(2)}x</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* status badges */}
+                        {bp && <p className="mt-3 text-center text-sm text-accent">✅ Bet placed</p>}
+                        {isFinished && m.score && (
+                          <p className="mt-2 text-center text-sm text-silver">Final Score: <span className="font-bold text-white">{m.score}</span></p>
+                        )}
                       </div>
                     );
                   })}
                 </div>
-              </>
-            )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* ── MY BETS ── */}
+        {activeTab==="mybets" && (
+          <div className="space-y-4">
+            {!myBets.length?<div className="glass-card p-8 text-center"><p className="text-lg">No bets yet</p><p className="text-silver">Go to Matches to start!</p></div>
+            : myBets.map(bet=>{
+              const mkt = marketsCache[bet.marketId];
+              return (
+                <div key={bet.id} className="glass-card p-4">
+                  <div className="flex justify-between mb-2">
+                    <span className="font-medium">{mkt?`${mkt.team1} vs ${mkt.team2}`:bet.marketId}</span>
+                    <span className="text-xs text-silver">{mkt?.gameDate}</span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-4 mb-3">
+                    <div><span className="text-xs text-silver">Prediction</span>
+                      <p className="font-medium">{bet.outcome===1?mkt?.team1||"Home":bet.outcome===2?mkt?.team2||"Away":"Draw"}</p></div>
+                    <div><span className="text-xs text-silver">Stake</span>
+                      <p className="font-medium">{Number(bet.amount).toFixed(2)} USDC</p></div>
+                    <div><span className="text-xs text-silver">Status</span>
+                      <p className={`font-medium ${bet.isWon===true?"text-accent":bet.isWon===false?"text-danger":"text-warning"}`}>
+                        {bet.claimed?(bet.isWon?`🎉 +${Number(bet.payout).toFixed(2)}`:"❌ Lost"):"⏳ Pending"}</p></div>
+                  </div>
+                  <div className="flex gap-2 justify-end">
+                    {!bet.claimed && !mkt?.isResolved && (
+                      <button onClick={()=>resolveMarket(bet.marketId)} disabled={resolving===bet.marketId}
+                        className="px-4 py-2 rounded-lg bg-primary text-white text-sm disabled:opacity-50">
+                        {resolving===bet.marketId?"Resolving...":"🤖 Resolve (AI)"}</button>
+                    )}
+                    {!bet.claimed && mkt?.isResolved && (
+                      <button onClick={()=>claimBet(bet.id)} disabled={claiming===bet.id}
+                        className="px-4 py-2 rounded-lg bg-accent text-white text-sm disabled:opacity-50">
+                        {claiming===bet.id?"Claiming...":"💰 Claim"}</button>
+                    )}
+                    {bet.claimed && bet.isWon && <span className="text-accent text-sm">✅ Claimed</span>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* ── LEADERBOARD ── */}
+        {activeTab==="leaderboard" && (
+          <div className="space-y-4">
+            <div className="text-center mb-4"><h2 className="text-2xl font-bold">🏆 Top Winners</h2></div>
+            {!leaderboard.length?<div className="glass-card p-8 text-center"><p>No data yet</p></div>
+            : <div className="space-y-2">
+              {leaderboard.map((e,i)=>(
+                <div key={e.address} className="glass-card p-4 grid grid-cols-5 gap-4 items-center">
+                  <span className="text-lg">{i===0?"🥇":i===1?"🥈":i===2?"🥉":`#${i+1}`}</span>
+                  <span className="font-medium font-mono">{shortenAddress(e.address)}</span>
+                  <span className="text-accent font-bold">{Number(e.totalWon).toFixed(1)} USDC</span>
+                  <span className={Number(e.profit)>=0?"text-accent":"text-danger"}>{Number(e.profit)>=0?"+":""}{Number(e.profit).toFixed(1)}</span>
+                  <span className="text-silver">{e.wins}W/{e.losses}L</span>
+                </div>
+              ))}
+            </div>}
           </div>
         )}
       </main>
 
-      {/* ── BET MODAL ──────────────────────────────────────── */}
+      {/* ── BET MODAL ── */}
       {betModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-          <div className="glass-card p-6 w-full max-w-md animate-slide-up gradient-border">
-            <div className="flex items-center justify-between mb-6">
-              <div className="flex items-center gap-2">
-                <TeamLogo teamCode={betModal.match.team1Code} teamName={betModal.match.team1} size="sm" />
-                <span className="font-medium">{betModal.match.team1}</span>
-              </div>
-              <span className="text-silver font-bold">VS</span>
-              <div className="flex items-center gap-2">
-                <span className="font-medium">{betModal.match.team2}</span>
-                <TeamLogo teamCode={betModal.match.team2Code} teamName={betModal.match.team2} size="sm" />
-              </div>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div className="glass-card p-6 max-w-md w-full animate-slide-up">
+            <div className="flex justify-between mb-4">
+              <h3 className="text-xl font-bold">Place Bet</h3>
+              <button onClick={()=>setBetModal(null)} className="text-silver hover:text-white">✕</button>
             </div>
-
-            <div className="grid grid-cols-2 gap-3 mb-4">
-              <div className="bg-surface-light rounded-xl p-3">
-                <div className="text-xs text-silver">Your Prediction</div>
-                <div className="text-sm font-bold text-primary">
-                  {betModal.selection === "team1"
-                    ? `${betModal.match.team1} Win`
-                    : betModal.selection === "team2"
-                      ? `${betModal.match.team2} Win`
-                      : "Draw"}
-                </div>
-              </div>
-              <div className="bg-surface-light rounded-xl p-3">
-                <div className="text-xs text-silver">Odds</div>
-                <div className="text-sm font-bold text-accent">
-                  {betModal.selection === "team1"
-                    ? betModal.match.oddsTeam1.toFixed(2)
-                    : betModal.selection === "team2"
-                      ? betModal.match.oddsTeam2.toFixed(2)
-                      : betModal.match.oddsDraw.toFixed(2)}
-                  x
-                </div>
-              </div>
+            <div className="flex items-center justify-center gap-4 mb-6">
+              <div className="text-center"><TeamLogo teamCode={betModal.match.team1Code} teamName={betModal.match.team1} size="lg"/><div className="mt-1 text-sm">{betModal.match.team1}</div></div>
+              <div className="text-2xl text-silver">VS</div>
+              <div className="text-center"><TeamLogo teamCode={betModal.match.team2Code} teamName={betModal.match.team2} size="lg"/><div className="mt-1 text-sm">{betModal.match.team2}</div></div>
             </div>
-
-            {/* Solvency indicator */}
-            {poolInfo && (
-              <div className="bg-surface-light rounded-xl p-3 mb-4">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-silver">Pool Liquidity</span>
-                  <span className={weiToGEN(poolInfo.available_liquidity) > Number(stakeAmount) ? "text-accent" : "text-danger"}>
-                    {weiToGEN(poolInfo.available_liquidity).toFixed(1)} GEN available
-                  </span>
-                </div>
-              </div>
-            )}
-
+            <div className="grid grid-cols-2 gap-4 mb-4">
+              <div><span className="text-xs text-silver">Prediction</span><p className="font-bold text-lg">{betModal.selection===1?`${betModal.match.team1} Win`:betModal.selection===2?`${betModal.match.team2} Win`:"Draw"}</p></div>
+              <div><span className="text-xs text-silver">Odds</span><p className="font-bold text-lg text-accent">{(betModal.selection===1?betModal.match.oddsTeam1:betModal.selection===2?betModal.match.oddsTeam2:betModal.match.oddsDraw).toFixed(2)}x</p></div>
+            </div>
             <div className="mb-4">
-              <div className="flex items-center justify-between mb-2">
-                <label className="text-sm text-silver">Stake Amount</label>
-                <span className="text-xs text-silver">Balance: {genBalance} GEN</span>
-              </div>
+              <div className="flex justify-between mb-1"><span className="text-sm">Stake</span><span className="text-xs text-silver">Balance: {Number(user.balance).toFixed(2)} USDC</span></div>
               <div className="relative">
-                <input
-                  type="number"
-                  value={stakeAmount}
-                  onChange={(e) => setStakeAmount(e.target.value)}
-                  className="w-full px-4 py-3 rounded-xl bg-surface-light border border-surface-lighter text-white text-lg font-bold focus:outline-none focus:border-primary transition-colors pr-16"
-                  placeholder="10"
-                  min="1"
-                />
-                <span className="absolute right-4 top-1/2 -translate-y-1/2 text-silver text-sm">GEN</span>
+                <input type="number" value={stakeAmount} onChange={e=>setStakeAmount(e.target.value)} min="1"
+                  className="w-full px-4 py-3 rounded-xl bg-surface-light border border-surface-lighter text-white text-lg font-bold focus:outline-none focus:border-primary pr-16" placeholder="5"/>
+                <span className="absolute right-4 top-1/2 -translate-y-1/2 text-silver">USDC</span>
               </div>
-              <div className="flex gap-2 mt-2">
-                {[10, 25, 50, 100].map((amount) => (
-                  <button
-                    key={amount}
-                    onClick={() => setStakeAmount(String(amount))}
-                    className="flex-1 py-1.5 rounded-lg bg-surface-light text-sm hover:bg-primary/20 hover:text-primary transition-colors"
-                  >
-                    {amount}
-                  </button>
-                ))}
-              </div>
+              <div className="flex gap-2 mt-2">{[5,10,25,50].map(a=><button key={a} onClick={()=>setStakeAmount(String(a))} className="px-3 py-1 rounded-lg bg-surface-light text-sm hover:bg-surface-lighter">{a}</button>)}</div>
             </div>
-
-            <div className="bg-accent/10 rounded-xl p-3 mb-4">
-              <div className="text-xs text-silver mb-1">Potential Payout</div>
-              <div className="text-lg font-bold text-accent">
-                {(
-                  Number(stakeAmount || 0) *
-                  (betModal.selection === "team1"
-                    ? betModal.match.oddsTeam1
-                    : betModal.selection === "team2"
-                      ? betModal.match.oddsTeam2
-                      : betModal.match.oddsDraw)
-                ).toFixed(2)}{" "}
-                GEN
-              </div>
+            <div className="flex justify-between mb-4 p-3 rounded-xl bg-surface-light">
+              <span className="text-silver">Potential Payout</span>
+              <span className="text-xl font-bold text-accent">{(Number(stakeAmount||0)*(betModal.selection===1?betModal.match.oddsTeam1:betModal.selection===2?betModal.match.oddsTeam2:betModal.match.oddsDraw)).toFixed(2)} USDC</span>
             </div>
-
-            {Number(genBalance) < Number(stakeAmount) && (
-              <div className="text-sm text-danger mb-4">
-                ⚠️ Insufficient balance.{" "}
-                <a href={FAUCET_URL} target="_blank" rel="noopener noreferrer" className="underline">
-                  Get GEN from faucet
-                </a>
-              </div>
-            )}
-
-            <div className="text-xs text-silver space-y-1 mb-6">
-              <p>✓ Bet recorded on GenLayer blockchain</p>
-              <p>✓ AI Oracle verifies match results from BBC Sport</p>
-              <p>✓ Win → Claim winnings → GEN transferred to wallet</p>
-              <p>✓ Pool solvency guaranteed before accepting bets</p>
+            {Number(user.balance)<Number(stakeAmount)&&<p className="mb-3 p-3 rounded-xl bg-danger/20 text-danger text-sm">Insufficient balance. <button onClick={()=>{setBetModal(null);setShowDeposit(true);}} className="underline">Deposit USDC</button></p>}
+            <div className="text-xs text-silver mb-4 space-y-1">
+              <p>✓ USDC deducted from your GoalBet balance</p>
+              <p>✓ AI Oracle resolves results from BBC Sport</p>
+              <p>✓ Winners split entire pool (Polymarket style)</p>
             </div>
-
-            <div className="flex gap-3">
-              <button
-                onClick={() => { setBetModal(null); setStakeAmount("10"); }}
-                className="flex-1 py-3 rounded-xl bg-surface-light text-silver font-medium hover:text-white transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handlePlaceBet}
-                disabled={loading || Number(stakeAmount) > Number(genBalance)}
-                className="flex-1 py-3 rounded-xl bg-gradient-to-r from-primary to-primary-dark text-white font-bold hover:opacity-90 transition-all disabled:opacity-50"
-              >
-                {loading ? "Placing..." : "Place Bet 🎯"}
-              </button>
-            </div>
+            <button onClick={placeBet} disabled={loading||Number(user.balance)<Number(stakeAmount)||Number(stakeAmount)<1}
+              className="w-full py-3 rounded-xl bg-gradient-to-r from-primary to-primary-dark text-white font-bold disabled:opacity-50">
+              {loading?"Placing...":"Place Bet"}</button>
           </div>
         </div>
       )}
 
-      {/* Footer */}
-      <footer className="max-w-5xl mx-auto px-4 mt-12 text-center text-xs text-silver/50">
-        <p>GoalBet • Built on <a href="https://genlayer.com" target="_blank" rel="noopener noreferrer" className="text-primary/50 hover:text-primary">GenLayer</a> • Contract: <a href={`https://explorer-studio.genlayer.com/address/${CONTRACT_ADDRESS}`} target="_blank" rel="noopener noreferrer" className="text-primary/50 hover:text-primary">{shortenAddress(CONTRACT_ADDRESS)}</a></p>
+      {/* ── DEPOSIT MODAL ── */}
+      {showDeposit && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div className="glass-card p-6 max-w-md w-full animate-slide-up">
+            <div className="flex justify-between mb-4">
+              <h3 className="text-xl font-bold">Deposit USDC</h3>
+              <button onClick={()=>setShowDeposit(false)} className="text-silver hover:text-white">✕</button>
+            </div>
+            <p className="text-silver mb-4">Send USDC (Base Sepolia) to your GoalBet wallet:</p>
+            <div className="p-3 rounded-xl bg-surface-light mb-4">
+              <p className="text-xs text-silver">Your GoalBet Wallet</p>
+              <p className="font-mono text-sm break-all">{user.projectWallet}</p>
+            </div>
+            <div className="mb-4">
+              <span className="text-sm">Amount</span>
+              <div className="relative mt-1">
+                <input type="number" value={depositAmt} onChange={e=>setDepositAmt(e.target.value)} min="1"
+                  className="w-full px-4 py-3 rounded-xl bg-surface-light border border-surface-lighter text-white text-lg font-bold focus:outline-none focus:border-primary pr-16"/>
+                <span className="absolute right-4 top-1/2 -translate-y-1/2 text-silver">USDC</span>
+              </div>
+            </div>
+            <button onClick={depositUsdc} disabled={depositing||Number(depositAmt)<=0}
+              className="w-full py-3 rounded-xl bg-gradient-to-r from-accent to-accent-dark text-white font-bold disabled:opacity-50">
+              {depositing?"Sending...":"Send USDC from MetaMask"}</button>
+            <p className="mt-3 text-xs text-silver text-center">USDC contract: {shortenAddress(USDC_ADDRESS)}</p>
+          </div>
+        </div>
+      )}
+
+      {/* footer */}
+      <footer className="fixed bottom-0 left-0 right-0 bg-bg/80 backdrop-blur-xl border-t border-surface-lighter py-3 text-center text-xs text-silver">
+        <span>Built on </span>
+        <a href="https://genlayer.com" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">GenLayer</a>
+        <span> • Oracle: </span>
+        <a href={`${EXPLORER_TX}${CONTRACT_ADDRESS}`} target="_blank" rel="noopener noreferrer" className="font-mono text-primary hover:underline">{shortenAddress(CONTRACT_ADDRESS)}</a>
+        <span> • USDC on Base Sepolia</span>
       </footer>
     </div>
   );
