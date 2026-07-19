@@ -83,54 +83,27 @@ export function groupMatchesByDate(matches: Match[]): Record<string, Match[]> {
 }
 
 export function formatDateHeader(gameDate: string): string {
-  const date = new Date(gameDate + "T12:00:00");
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const tomorrow = new Date(today);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  const dayAfter = new Date(today);
-  dayAfter.setDate(dayAfter.getDate() + 2);
-  const targetDate = new Date(date);
-  targetDate.setHours(0, 0, 0, 0);
-
-  if (targetDate.getTime() === today.getTime()) return "📅 Today";
-  if (targetDate.getTime() === tomorrow.getTime()) return "📅 Tomorrow";
-  if (targetDate.getTime() === dayAfter.getTime()) {
-    return "📅 " + date.toLocaleDateString("en-US", { weekday: "long" });
-  }
-  return date.toLocaleDateString("en-US", {
-    weekday: "long", month: "short", day: "numeric",
-  });
+  // Use fixed UTC parsing to avoid SSR/client mismatch
+  const parts = gameDate.split("-");
+  const month = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][parseInt(parts[1])-1];
+  const day = parseInt(parts[2]);
+  return `📅 ${month} ${day}`;
 }
 
+/** Returns countdown string — safe for SSR (no Date.now dependency for finished) */
 export function getTimeUntilMatch(kickoffTime?: string): string {
   if (!kickoffTime) return "";
-  const now = new Date();
-  const kickoff = new Date(kickoffTime);
-  const diffMs = kickoff.getTime() - now.getTime();
-
-  if (diffMs < -7200_000) return "FT"; // >2h ago → finished
-  if (diffMs < 0) return "LIVE";
-
-  const diffMins = Math.floor(diffMs / 60000);
-  const diffHours = Math.floor(diffMins / 60);
-
-  if (diffHours >= 48) {
-    const days = Math.floor(diffHours / 24);
-    return `${days}d`;
-  } else if (diffHours >= 24) {
-    return `Tomorrow`;
-  } else if (diffHours > 0) {
-    return `${diffHours}h ${diffMins % 60}m`;
-  } else {
-    return `${diffMins}m`;
-  }
+  // This runs on both server and client — only use for rough display
+  return ""; // Countdown calculated client-side only via useEffect
 }
 
-/** Format kickoff as local time string e.g. "20:00" */
+/** Format kickoff as UTC time — consistent server/client */
 export function formatKickoffTime(iso: string): string {
+  // Parse ISO and extract UTC hours/minutes directly (no locale dependency)
   const d = new Date(iso);
-  return d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false });
+  const h = d.getUTCHours().toString().padStart(2, "0");
+  const m = d.getUTCMinutes().toString().padStart(2, "0");
+  return `${h}:${m} UTC`;
 }
 
 export function shortenAddress(address: string): string {

@@ -2,7 +2,7 @@
 import { useState, useEffect, useCallback } from "react";
 import TeamLogo from "@/components/TeamLogo";
 import {
-  type Match, groupMatchesByDate, formatDateHeader, getTimeUntilMatch,
+  type Match, groupMatchesByDate, formatDateHeader,
   formatKickoffTime, LEAGUE_INFO,
 } from "@/lib/matches";
 import {
@@ -10,6 +10,37 @@ import {
   BASE_SEPOLIA, CONTRACT_ADDRESS, EXPLORER_TX,
 } from "@/lib/genlayer";
 import { USDC_ADDRESS, USDC_DECIMALS, POOL_WALLET, encodeTransfer, encodeBalanceOf } from "@/lib/usdc";
+
+/** Client-side countdown — avoids SSR mismatch */
+function useCountdown(kickoffTime?: string): string {
+  const [text, setText] = useState("");
+  useEffect(() => {
+    if (!kickoffTime) return;
+    const update = () => {
+      const diff = new Date(kickoffTime).getTime() - Date.now();
+      if (diff < -7200_000) { setText("FT"); return; }
+      if (diff < 0) { setText("LIVE"); return; }
+      const mins = Math.floor(diff / 60000);
+      const hrs = Math.floor(mins / 60);
+      if (hrs >= 24) setText(`${Math.floor(hrs/24)}d ${hrs%24}h`);
+      else if (hrs > 0) setText(`${hrs}h ${mins%60}m`);
+      else setText(`${mins}m`);
+    };
+    update();
+    const iv = setInterval(update, 30000);
+    return () => clearInterval(iv);
+  }, [kickoffTime]);
+  return text;
+}
+
+/** Tiny component so each card gets its own countdown */
+function Countdown({ kickoffTime }: { kickoffTime?: string }) {
+  const text = useCountdown(kickoffTime);
+  if (!text) return null;
+  if (text === "LIVE") return <span className="text-xs font-bold text-danger animate-pulse">🔴 LIVE</span>;
+  if (text === "FT") return <span className="text-xs px-2 py-0.5 rounded-full bg-surface-lighter text-silver">FT</span>;
+  return <span className="text-xs text-silver">{text}</span>;
+}
 
 interface Props {
   initialMatches: Match[];
@@ -261,9 +292,9 @@ export default function GoalBetApp({ initialMatches }: Props) {
         ) : (
           <div className="space-y-3">
             {matches.map(m => {
-              const tu = getTimeUntilMatch(m.kickoffTime);
+              
               const isLive = m.status==="IN_PLAY"||m.status==="PAUSED";
-              const isFinished = m.status==="FINISHED"||tu==="FT";
+              const isFinished = m.status==="FINISHED";
               const li = LEAGUE_INFO[m.league];
               return (
                 <div key={m.id} className={`glass-card p-4 ${isLive?"border-danger/40":""}`}>
@@ -272,10 +303,11 @@ export default function GoalBetApp({ initialMatches }: Props) {
                       {li&&<span className="text-sm">{li.emoji}</span>}
                       <span className="text-xs text-silver font-medium">{m.league}</span>
                     </div>
-                    <div>
-                      {isLive?<span className="text-xs font-bold text-danger animate-pulse">🔴 LIVE {m.elapsed?`${m.elapsed}'`:""}</span>
-                      :isFinished?<span className="text-xs px-2 py-0.5 rounded-full bg-surface-lighter text-silver">FT</span>
-                      :<span className="text-xs font-mono text-white">{formatKickoffTime(m.kickoffTime)} <span className="text-silver">({tu})</span></span>}
+                    <div className="flex items-center gap-2">
+                      {isFinished
+                        ? <span className="text-xs px-2 py-0.5 rounded-full bg-surface-lighter text-silver">FT</span>
+                        : <><span className="text-xs font-mono text-white">{formatKickoffTime(m.kickoffTime)}</span><Countdown kickoffTime={m.kickoffTime} /></>
+                      }
                     </div>
                   </div>
                   <div className="flex items-center justify-between">
@@ -359,9 +391,9 @@ export default function GoalBetApp({ initialMatches }: Props) {
                 <div className="flex items-center gap-2 mb-3"><span className="text-lg font-semibold">{formatDateHeader(date)}</span></div>
                 <div className="grid gap-3">
                   {(dm as Match[]).map((m:Match)=>{
-                    const bp=hasBet(m); const tu=getTimeUntilMatch(m.kickoffTime);
+                    const bp=hasBet(m); 
                     const isLive=m.status==="IN_PLAY"||m.status==="PAUSED";
-                    const isFinished=m.status==="FINISHED"||tu==="FT";
+                    const isFinished=m.status==="FINISHED";
                     const canBet=!bp&&!isLive&&!isFinished;
                     const li=LEAGUE_INFO[m.league];
                     const mid=mkid(m); const mkt=marketsCache[mid];
@@ -376,7 +408,7 @@ export default function GoalBetApp({ initialMatches }: Props) {
                           <div className="flex items-center gap-2">
                             {isLive?<div className="flex items-center gap-1.5"><span className="relative flex h-2 w-2"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-danger opacity-75"/><span className="relative inline-flex rounded-full h-2 w-2 bg-danger"/></span><span className="text-xs font-bold text-danger">{m.status==="PAUSED"?"HT":m.elapsed?`${m.elapsed}'`:"LIVE"}</span></div>
                             :isFinished?<span className="text-xs px-2 py-0.5 rounded-full bg-surface-lighter text-silver">FT</span>
-                            :<div className="flex items-center gap-1.5"><span className="text-xs font-mono text-white">{formatKickoffTime(m.kickoffTime)}</span>{tu&&<span className="text-xs text-silver">({tu})</span>}</div>}
+                            :<div className="flex items-center gap-1.5"><span className="text-xs font-mono text-white">{formatKickoffTime(m.kickoffTime)}</span><Countdown kickoffTime={m.kickoffTime} /></div>}
                           </div>
                         </div>
                         <div className="flex items-center justify-between mb-1">
