@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   const rows = await db.select({
-    username: users.username, address: users.walletAddress,
+    address: users.walletAddress,
     totalWon: users.totalWon, totalStaked: users.totalStaked,
     wins: users.wins, losses: users.losses, totalBets: users.totalBets,
   }).from(users)
@@ -14,9 +14,8 @@ export async function GET() {
     .limit(50);
 
   return Response.json({
-    leaderboard: rows.map((r) => ({
-      ...r,
-      profit: (Number(r.totalWon) - Number(r.totalStaked)).toFixed(2),
+    leaderboard: rows.map(r => ({
+      ...r, profit: (Number(r.totalWon) - Number(r.totalStaked)).toFixed(2),
     })),
   });
 }
