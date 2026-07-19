@@ -90,11 +90,17 @@ function worldCupFixtures(): Match[] {
   }
 
   return [
-    // Third-place: France vs England — July 18, 5 PM ET = 21:00 UTC
-    mkMatch("wc2026-3rd-fra-eng", "2026-07-18", "2026-07-18T21:00:00Z",
-      "France","England","FRA","ENG",
-      "Hard Rock Stadium, Miami", "Third Place",
-      1.80, 3.40, 3.80),
+    // Third-place: France 4-6 England — July 18, FINISHED
+    (() => {
+      const m = mkMatch("wc2026-3rd-fra-eng", "2026-07-18", "2026-07-18T21:00:00Z",
+        "France","England","FRA","ENG",
+        "Hard Rock Stadium, Miami", "Third Place",
+        1.80, 3.40, 3.80);
+      m.status = "FINISHED";
+      m.score = "4-6";
+      m.elapsed = null;
+      return m;
+    })(),
 
     // FINAL: Spain vs Argentina — July 19, 3 PM ET = 19:00 UTC
     mkMatch("wc2026-final-esp-arg", "2026-07-19", "2026-07-19T19:00:00Z",

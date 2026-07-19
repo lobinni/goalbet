@@ -351,31 +351,134 @@ export default function GoalBetApp() {
                         )}
                         {bp&&!isFinished&&<p className="mt-3 text-center text-sm text-accent">✅ Bet placed</p>}
 
-                        {/* After match: resolve/claim */}
-                        {isFinished&&m.score&&(
-                          <div className="mt-3 space-y-2">
-                            <p className="text-center text-sm text-silver">Final: <span className="font-bold text-white text-lg">{m.score}</span></p>
+                        {/* After match finished */}
+                        {isFinished && (
+                          <div className="mt-3 space-y-3">
+                            {/* Score display */}
+                            {m.score && (
+                              <p className="text-center text-sm text-silver">
+                                Final Score: <span className="font-bold text-white text-lg">{m.score}</span>
+                              </p>
+                            )}
+
                             {(()=>{
-                              const ubets=myBets.filter(b=>b.marketId===mid);
-                              if(!ubets.length&&mkt&&!mkt.isResolved)
-                                return <div className="flex justify-center"><button onClick={()=>resolveMarket(mid)} disabled={resolving===mid} className="px-5 py-2.5 rounded-lg bg-gradient-to-r from-primary to-primary-dark text-white text-sm font-medium disabled:opacity-50">{resolving===mid?"🤖 Resolving...":"🤖 Resolve with AI"}</button></div>;
-                              if(!ubets.length&&mkt?.isResolved)
-                                return <p className="text-center text-xs text-silver">Winner: {mkt.winningOutcome===1?m.team1:mkt.winningOutcome===2?m.team2:"Draw"}</p>;
-                              if(ubets.length&&mkt&&!mkt.isResolved)
-                                return <div className="flex justify-center"><button onClick={()=>resolveMarket(mid)} disabled={resolving===mid} className="px-5 py-2.5 rounded-lg bg-gradient-to-r from-primary to-primary-dark text-white text-sm font-medium disabled:opacity-50 animate-pulse-glow">{resolving===mid?"🤖 Resolving...":"🤖 Resolve with AI Oracle"}</button></div>;
-                              if(ubets.length&&mkt?.isResolved) {
-                                const unclaimed=ubets.filter(b=>!b.claimed);
-                                if(unclaimed.length)
-                                  return <div className="flex justify-center gap-2">{unclaimed.map(b=><button key={b.id} onClick={()=>claimBet(b.id)} disabled={claiming===b.id} className="px-4 py-2 rounded-lg bg-accent text-white text-sm font-medium disabled:opacity-50">{claiming===b.id?"Claiming...":"💰 Claim Winnings"}</button>)}</div>;
-                                const won=ubets.filter(b=>b.isWon);
-                                return <p className="text-center text-sm">{won.length?<span className="text-accent">🎉 Won {won.reduce((s,b)=>s+Number(b.payout||0),0).toFixed(2)} USDC</span>:<span className="text-danger">❌ Better luck next time</span>}</p>;
+                              const ubets = myBets.filter(b => b.marketId === mid);
+                              const isResolved = mkt?.isResolved;
+
+                              /* ─── Case 1: Not resolved yet → show Resolve button for everyone ─── */
+                              if (!isResolved) {
+                                return (
+                                  <div className="text-center space-y-2">
+                                    <p className="text-xs text-silver">
+                                      {ubets.length
+                                        ? `You have ${ubets.length} bet(s) on this match. Resolve to check results!`
+                                        : "Match ended. Resolve to see the AI-verified result."}
+                                    </p>
+                                    <button
+                                      onClick={async () => {
+                                        // Ensure market exists in DB first
+                                        await getMarketForMatch(m);
+                                        resolveMarket(mid);
+                                      }}
+                                      disabled={resolving === mid}
+                                      className="px-6 py-2.5 rounded-lg bg-gradient-to-r from-primary to-primary-dark text-white text-sm font-medium disabled:opacity-50 animate-pulse-glow"
+                                    >
+                                      {resolving === mid
+                                        ? "🤖 AI Oracle resolving — please wait..."
+                                        : "🤖 Resolve with GenLayer AI Oracle"}
+                                    </button>
+                                    {resolving === mid && (
+                                      <p className="text-xs text-primary animate-pulse">
+                                        Fetching result from BBC Sport → LLM analysis → Validator consensus...
+                                      </p>
+                                    )}
+                                  </div>
+                                );
                               }
-                              return null;
+
+                              /* ─── Case 2: Resolved, show winner ─── */
+                              const winnerName = mkt.winningOutcome === 1 ? m.team1
+                                : mkt.winningOutcome === 2 ? m.team2 : "Draw";
+
+                              /* ─── Case 2a: User has no bets → show result info ─── */
+                              if (!ubets.length) {
+                                return (
+                                  <div className="text-center p-3 rounded-xl bg-surface-light">
+                                    <p className="text-sm">
+                                      {mkt.finalScore && <span className="text-white font-bold">{mkt.finalScore} • </span>}
+                                      Winner: <span className="text-accent font-bold">{winnerName}</span>
+                                    </p>
+                                    <p className="text-xs text-silver mt-1">
+                                      You didn&apos;t bet on this match
+                                    </p>
+                                  </div>
+                                );
+                              }
+
+                              /* ─── Case 2b: User has unclaimed bets → show claim buttons ─── */
+                              const unclaimed = ubets.filter(b => !b.claimed);
+                              if (unclaimed.length) {
+                                // Calculate potential payouts
+                                const wp = mkt.winningOutcome === 1 ? Number(mkt.poolHome)
+                                  : mkt.winningOutcome === 0 ? Number(mkt.poolDraw) : Number(mkt.poolAway);
+                                const tp = Number(mkt.totalPool);
+
+                                return (
+                                  <div className="space-y-2">
+                                    <div className="text-center p-3 rounded-xl bg-surface-light">
+                                      <p className="text-sm">
+                                        {mkt.finalScore && <span className="text-white font-bold">{mkt.finalScore} • </span>}
+                                        Winner: <span className="text-accent font-bold">{winnerName}</span>
+                                      </p>
+                                    </div>
+                                    {unclaimed.map(b => {
+                                      const isWin = b.outcome === mkt.winningOutcome;
+                                      const payout = isWin && wp > 0 ? (Number(b.amount) * tp) / wp : 0;
+                                      return (
+                                        <div key={b.id} className={`flex items-center justify-between p-3 rounded-xl ${isWin ? "bg-accent/10 border border-accent/30" : "bg-danger/10 border border-danger/30"}`}>
+                                          <div>
+                                            <p className="text-sm font-medium">
+                                              You bet <span className="text-white">{Number(b.amount).toFixed(2)} USDC</span> on{" "}
+                                              <span className="text-white">{b.outcome===1?m.team1:b.outcome===2?m.team2:"Draw"}</span>
+                                            </p>
+                                            <p className={`text-xs ${isWin ? "text-accent" : "text-danger"}`}>
+                                              {isWin ? `🎉 You won! Payout: ${payout.toFixed(2)} USDC` : "❌ This bet lost"}
+                                            </p>
+                                          </div>
+                                          <button
+                                            onClick={() => claimBet(b.id)}
+                                            disabled={claiming === b.id}
+                                            className={`px-4 py-2 rounded-lg text-white text-sm font-medium disabled:opacity-50 ${isWin ? "bg-accent" : "bg-surface-lighter"}`}
+                                          >
+                                            {claiming === b.id ? "..." : isWin ? "💰 Claim" : "Confirm"}
+                                          </button>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                );
+                              }
+
+                              /* ─── Case 2c: All claimed → show final results ─── */
+                              const wonBets = ubets.filter(b => b.isWon);
+                              const totalPayout = wonBets.reduce((s, b) => s + Number(b.payout || 0), 0);
+                              return (
+                                <div className="text-center p-3 rounded-xl bg-surface-light">
+                                  <p className="text-sm">
+                                    {mkt.finalScore && <span className="text-white font-bold">{mkt.finalScore} • </span>}
+                                    Winner: <span className="text-accent font-bold">{winnerName}</span>
+                                  </p>
+                                  {wonBets.length > 0
+                                    ? <p className="text-accent text-sm mt-1">🎉 You won {totalPayout.toFixed(2)} USDC! ✅ Claimed</p>
+                                    : <p className="text-danger text-sm mt-1">❌ You lost. Better luck next time!</p>
+                                  }
+                                </div>
+                              );
                             })()}
                           </div>
                         )}
                         {/* Pool info */}
-                        {mkt&&Number(mkt.totalPool)>0&&<p className="mt-2 text-center text-xs text-surface-lighter">Pool: {Number(mkt.totalPool).toFixed(2)} USDC</p>}
+                        {mkt&&Number(mkt.totalPool)>0&&<p className="mt-2 text-center text-xs text-surface-lighter">Pool: {Number(mkt.totalPool).toFixed(2)} USDC • {mkt.totalBets} bets</p>}
                       </div>
                     );
                   })}

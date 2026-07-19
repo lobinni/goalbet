@@ -14,7 +14,7 @@ import { studionet } from "genlayer-js/chains";
 
 export const CONTRACT_ADDRESS = (
   process.env.NEXT_PUBLIC_CONTRACT_ADDRESS ||
-  "0xAaE949a5eE8808ABFAd804ea562213Aca3C028d5"
+  "0xfe3bCb5D779131a0e71ADa8718fd4694cab4622D"
 ) as `0x${string}`;
 export const RPC_URL = "https://studio.genlayer.com/api";
 export const EXPLORER_TX = "https://explorer-studio.genlayer.com/tx/";
