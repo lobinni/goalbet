@@ -234,23 +234,67 @@ export default function GoalBetApp() {
   const hasBet = (m:Match) => myBets.some(b=>b.marketId===mkid(m));
   const matchesByDate = groupMatchesByDate(matches);
 
-  // ═══ NOT CONNECTED ═══
+  // ═══ NOT CONNECTED — show matches + connect prompt ═══
   if(!account) return (
-    <div className="min-h-screen flex items-center justify-center p-4">
-      <div className="text-center max-w-lg animate-fade-in">
-        <div className="text-6xl mb-4">⚽</div>
-        <h1 className="text-5xl font-bold gradient-text mb-2">GoalBet</h1>
-        <p className="text-silver text-lg mb-8">On-Chain Football Predictions</p>
-        <div className="glass-card p-6 mb-6 text-left space-y-2">
-          <p>💰 Bet USDC directly from your wallet</p>
-          <p>🤖 AI Oracle resolves results via GenLayer</p>
-          <p>📊 Polymarket-style pari-mutuel pools</p>
-          <p>🏆 Winners split the entire pool</p>
-        </div>
-        <button onClick={connect} className="px-8 py-4 rounded-xl bg-gradient-to-r from-primary to-primary-dark text-white text-lg font-bold hover:opacity-90 animate-pulse-glow">
-          🦊 Connect MetaMask
+    <div className="min-h-screen pb-20">
+      {/* Hero */}
+      <div className="text-center py-8 px-4">
+        <div className="text-5xl mb-3">⚽</div>
+        <h1 className="text-4xl font-bold gradient-text mb-1">GoalBet</h1>
+        <p className="text-silver text-sm mb-4">AI-Powered Football Predictions • USDC on Base Sepolia • GenLayer Oracle</p>
+        <button onClick={connect} className="px-6 py-3 rounded-xl bg-gradient-to-r from-primary to-primary-dark text-white font-bold hover:opacity-90 animate-pulse-glow">
+          🦊 Connect MetaMask to Bet
         </button>
-        <p className="mt-3 text-xs text-silver">Network: Base Sepolia • Currency: USDC</p>
+      </div>
+
+      {/* Show matches even without wallet */}
+      <div className="max-w-5xl mx-auto px-4">
+        <h2 className="text-lg font-semibold mb-4">🏆 Live Matches</h2>
+        {matchesLoading ? (
+          <div className="glass-card p-8 text-center"><div className="text-4xl mb-2 animate-pulse">⚽</div><p className="text-silver">Loading fixtures...</p></div>
+        ) : !matches.length ? (
+          <div className="glass-card p-8 text-center"><p className="text-silver">No matches available</p></div>
+        ) : (
+          <div className="space-y-3">
+            {matches.map(m => {
+              const tu = getTimeUntilMatch(m.kickoffTime);
+              const isLive = m.status==="IN_PLAY"||m.status==="PAUSED";
+              const isFinished = m.status==="FINISHED"||tu==="FT";
+              const li = LEAGUE_INFO[m.league];
+              return (
+                <div key={m.id} className={`glass-card p-4 ${isLive?"border-danger/40":""}`}>
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      {li&&<span className="text-sm">{li.emoji}</span>}
+                      <span className="text-xs text-silver font-medium">{m.league}</span>
+                    </div>
+                    <div>
+                      {isLive?<span className="text-xs font-bold text-danger animate-pulse">🔴 LIVE {m.elapsed?`${m.elapsed}'`:""}</span>
+                      :isFinished?<span className="text-xs px-2 py-0.5 rounded-full bg-surface-lighter text-silver">FT</span>
+                      :<span className="text-xs font-mono text-white">{formatKickoffTime(m.kickoffTime)} <span className="text-silver">({tu})</span></span>}
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 flex-1"><TeamLogo teamCode={m.team1Code} teamName={m.team1} size="md"/><span className="font-medium">{m.team1}</span></div>
+                    <div className="px-4 min-w-[60px] text-center">{m.score?<span className={`text-xl font-bold ${isLive?"text-danger":"text-white"}`}>{m.score}</span>:<span className="text-surface-lighter font-bold">vs</span>}</div>
+                    <div className="flex items-center gap-2 flex-1 justify-end"><span className="font-medium">{m.team2}</span><TeamLogo teamCode={m.team2Code} teamName={m.team2} size="md"/></div>
+                  </div>
+                  {m.venue&&<p className="text-center text-xs text-surface-lighter mt-2">🏟 {m.venue}</p>}
+                  {!isFinished&&(
+                    <div className="grid grid-cols-3 gap-2 mt-3">
+                      {[{l:"Home",od:m.oddsTeam1,c:"text-accent"},{l:"Draw",od:m.oddsDraw,c:"text-warning"},{l:"Away",od:m.oddsTeam2,c:"text-primary"}].map(o=>(
+                        <button key={o.l} onClick={connect} className="flex flex-col items-center p-2 rounded-xl bg-surface-light hover:bg-surface-lighter transition-colors">
+                          <span className="text-xs text-silver">{o.l}</span><span className={`text-lg font-bold ${o.c}`}>{o.od.toFixed(2)}x</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {isFinished&&m.score&&<p className="text-center text-sm text-silver mt-2">Final Score: <span className="font-bold text-white">{m.score}</span></p>}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );
