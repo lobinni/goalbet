@@ -649,7 +649,7 @@ export default function GoalBetApp({ initialMatches }: Props) {
 
       <footer className="fixed bottom-0 left-0 right-0 bg-bg/80 backdrop-blur-xl border-t border-surface-lighter py-3 text-center text-xs text-silver">
         Built on <a href="https://genlayer.com" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">GenLayer</a>
-        {" • "}<a href={`${EXPLORER_TX}${CONTRACT_ADDRESS}`} target="_blank" rel="noopener noreferrer" className="font-mono text-primary hover:underline">{shortenAddress(CONTRACT_ADDRESS)}</a>
+        {" • "}<a href={`${EXPLORER_ADDR}${CONTRACT_ADDRESS}`} target="_blank" rel="noopener noreferrer" className="font-mono text-primary hover:underline">{shortenAddress(CONTRACT_ADDRESS)}</a>
         {" • USDC on Base Sepolia"}
       </footer>
     </div>
