@@ -38,6 +38,8 @@ export const LEAGUE_INFO: Record<string, { emoji: string; country: string }> = {
   "Copa Libertadores":    { emoji: "🏆", country: "South America" },
   "FIFA World Cup":       { emoji: "🏆", country: "World" },
   "FIFA World Cup 2026":  { emoji: "🏆", country: "World" },
+  "FIFA World Cup 2026 — Third Place": { emoji: "🏆", country: "World" },
+  "FIFA World Cup 2026 — Final": { emoji: "🏆", country: "World" },
   "European Championship":{ emoji: "🇪🇺", country: "Europe" },
   "Liga MX":              { emoji: "🇲🇽", country: "Mexico" },
 };

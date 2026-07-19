@@ -165,31 +165,44 @@ export default function GoalBetApp() {
     setDepositing(false);
   };
 
-  // ── fixtures ──
+  // ── fixtures + markets cache ──
   const fetchMatches = useCallback(async ()=>{
     setMatchesLoading(true);
     try {
-      const r = await fetch("/api/fixtures"); const d = await r.json();
-      if(d.matches) setMatches(d.matches);
+      const [fixRes, mktRes] = await Promise.all([
+        fetch("/api/fixtures"),
+        fetch("/api/markets"),
+      ]);
+      const fixData = await fixRes.json();
+      const mktData = await mktRes.json();
+      if(fixData.matches) setMatches(fixData.matches);
+      if(mktData.markets) {
+        const cache: Record<string,MarketRow> = {};
+        for(const m of mktData.markets) cache[m.id] = m;
+        setMarketsCache(prev => ({...prev, ...cache}));
+      }
     } catch {}
     setMatchesLoading(false);
   },[]);
   useEffect(()=>{ fetchMatches(); },[fetchMatches]);
 
-  // ── my bets + load market info ──
+  // ── my bets + load all markets for context ──
   const fetchBets = useCallback(async ()=>{
     if(!user) return;
-    const r = await fetch(`/api/bets?userId=${user.id}`); const d = await r.json();
-    if(d.bets) {
-      setMyBets(d.bets);
-      // Also load market info for each bet's market
-      const mr = await fetch("/api/markets"); const md = await mr.json();
-      if(md.markets) {
+    try {
+      const [betsRes, marketsRes] = await Promise.all([
+        fetch(`/api/bets?userId=${user.id}`),
+        fetch("/api/markets"),
+      ]);
+      const betsData = await betsRes.json();
+      const marketsData = await marketsRes.json();
+      if(betsData.bets) setMyBets(betsData.bets);
+      if(marketsData.markets) {
         const cache: Record<string,MarketRow> = {};
-        for(const m of md.markets) cache[m.id] = m;
+        for(const m of marketsData.markets) cache[m.id] = m;
         setMarketsCache(cache);
       }
-    }
+    } catch {}
   },[user]);
   useEffect(()=>{ if(user) fetchBets(); },[user,fetchBets]);
 
@@ -492,10 +505,69 @@ export default function GoalBetApp() {
                           </div>
                         )}
 
-                        {/* status badges */}
-                        {bp && <p className="mt-3 text-center text-sm text-accent">✅ Bet placed</p>}
+                        {/* status badges + actions */}
+                        {bp && !isFinished && <p className="mt-3 text-center text-sm text-accent">✅ Bet placed</p>}
                         {isFinished && m.score && (
-                          <p className="mt-2 text-center text-sm text-silver">Final Score: <span className="font-bold text-white">{m.score}</span></p>
+                          <div className="mt-3 space-y-2">
+                            <p className="text-center text-sm text-silver">Final Score: <span className="font-bold text-white text-lg">{m.score}</span></p>
+                            {bp && (() => {
+                              const mid = mkid(m);
+                              const mkt = marketsCache[mid];
+                              const userBetsOnMatch = myBets.filter(b => b.marketId === mid);
+                              const allClaimed = userBetsOnMatch.length > 0 && userBetsOnMatch.every(b => b.claimed);
+                              const hasUnclaimed = userBetsOnMatch.some(b => !b.claimed);
+
+                              if (mkt?.isResolved && hasUnclaimed) {
+                                return (
+                                  <div className="flex justify-center gap-2">
+                                    {userBetsOnMatch.filter(b => !b.claimed).map(bet => (
+                                      <button key={bet.id} onClick={() => claimBet(bet.id)} disabled={claiming === bet.id}
+                                        className="px-4 py-2 rounded-lg bg-accent text-white text-sm font-medium disabled:opacity-50">
+                                        {claiming === bet.id ? "Claiming..." : "💰 Claim Winnings"}
+                                      </button>
+                                    ))}
+                                  </div>
+                                );
+                              }
+                              if (mkt?.isResolved && allClaimed) {
+                                const wonBets = userBetsOnMatch.filter(b => b.isWon);
+                                return <p className="text-center text-sm text-accent">
+                                  {wonBets.length > 0 ? `🎉 Won ${wonBets.reduce((s,b) => s + Number(b.payout||0), 0).toFixed(2)} USDC` : "❌ Better luck next time"}
+                                </p>;
+                              }
+                              if (!mkt?.isResolved) {
+                                return (
+                                  <div className="flex justify-center">
+                                    <button onClick={() => resolveMarket(mid)} disabled={resolving === mid}
+                                      className="px-5 py-2.5 rounded-lg bg-gradient-to-r from-primary to-primary-dark text-white text-sm font-medium disabled:opacity-50 animate-pulse-glow">
+                                      {resolving === mid ? "🤖 AI Oracle resolving..." : "🤖 Resolve with AI Oracle"}
+                                    </button>
+                                  </div>
+                                );
+                              }
+                              return null;
+                            })()}
+                            {!bp && (() => {
+                              const mid = mkid(m);
+                              const mkt = marketsCache[mid];
+                              if (!mkt?.isResolved && mkt) {
+                                return (
+                                  <div className="flex justify-center">
+                                    <button onClick={() => resolveMarket(mid)} disabled={resolving === mid}
+                                      className="px-5 py-2.5 rounded-lg bg-gradient-to-r from-primary to-primary-dark text-white text-sm font-medium disabled:opacity-50">
+                                      {resolving === mid ? "🤖 Resolving..." : "🤖 Resolve with AI"}
+                                    </button>
+                                  </div>
+                                );
+                              }
+                              if (mkt?.isResolved) {
+                                return <p className="text-center text-xs text-silver">
+                                  Winner: {mkt.winningOutcome === 1 ? m.team1 : mkt.winningOutcome === 2 ? m.team2 : "Draw"}
+                                </p>;
+                              }
+                              return null;
+                            })()}
+                          </div>
                         )}
                       </div>
                     );
