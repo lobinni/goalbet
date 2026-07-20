@@ -20,7 +20,7 @@ Decentralized football prediction market powered by **GenLayer AI Oracle** for t
                          │
 ┌────────────────────────▼────────────────────────────────────┐
 │  GenLayer StudioNet  (Brain — AI Oracle)                    │
-│  Contract: 0xAaE949a5eE8808ABFAd804ea562213Aca3C028d5      │
+│  Contract: 0xfe3bCb5D779131a0e71ADa8718fd4694cab4622D      │
 │  → resolve_market() fetches BBC Sport                       │
 │  → LLM extracts match score                                │
 │  → Multi-validator consensus                                │
@@ -49,7 +49,7 @@ Import repo → set environment variables:
 | Variable | Value |
 |---|---|
 | `DATABASE_URL` | `postgresql://...` (from Neon) |
-| `NEXT_PUBLIC_CONTRACT_ADDRESS` | `0xAaE949a5eE8808ABFAd804ea562213Aca3C028d5` |
+| `NEXT_PUBLIC_CONTRACT_ADDRESS` | `0xfe3bCb5D779131a0e71ADa8718fd4694cab4622D` |
 
 ### 4. Push schema + seed
 
