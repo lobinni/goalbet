@@ -1,33 +1,28 @@
 import { db } from "@/db";
 import { bets, markets, users } from "@/db/schema";
+import { ensureTables } from "@/db/ensure-tables";
 import { eq, desc } from "drizzle-orm";
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
   try {
+    await ensureTables();
     const uid = new URL(req.url).searchParams.get("userId");
     if (!uid) return Response.json({ error: "userId required" }, { status: 400 });
     return Response.json({
       bets: await db.select().from(bets).where(eq(bets.userId, uid)).orderBy(desc(bets.createdAt)),
     });
   } catch (e) {
-    console.error("GET /api/bets error:", e);
-    return Response.json({ error: "Internal server error" }, { status: 500 });
+    const msg = (e as Error).message || "Unknown error";
+    console.error("GET /api/bets error:", msg);
+    return Response.json({ error: msg }, { status: 500 });
   }
 }
 
-/**
- * POST /api/bets — Place a bet
- *
- * Frontend sends USDC tx hash (user already sent USDC to pool wallet via MetaMask).
- * Server records bet + updates pool.
- *
- * GenLayer on-chain recording is done best-effort after the response.
- * On Vercel serverless, fire-and-forget promises get killed, so we
- * skip GenLayer recording here and let /api/resolve handle on-chain state.
- */
 export async function POST(req: Request) {
   try {
+    await ensureTables();
+
     const body = await req.json();
     const { userId, marketId, outcome, amount, txHash } = body;
     if (!userId || !marketId || outcome === undefined || !amount)
@@ -45,7 +40,7 @@ export async function POST(req: Request) {
 
     const mkt = m[0];
 
-    // Server-side kickoff lock: no bets once the match has started
+    // Server-side kickoff lock
     if (mkt.kickoffTime) {
       const ko = new Date(mkt.kickoffTime).getTime();
       if (!isNaN(ko) && Date.now() >= ko) {
@@ -55,13 +50,11 @@ export async function POST(req: Request) {
 
     const oc = Number(outcome);
 
-    // Update user stats
     await db.update(users).set({
       totalBets: u[0].totalBets + 1,
       totalStaked: (Number(u[0].totalStaked) + amt).toFixed(6),
     }).where(eq(users.id, userId));
 
-    // Credit pool
     const poolField = oc === 1 ? "poolHome" : oc === 0 ? "poolDraw" : "poolAway";
     await db.update(markets).set({
       [poolField]: (Number(mkt[poolField]) + amt).toFixed(6),
@@ -69,17 +62,10 @@ export async function POST(req: Request) {
       totalBets: mkt.totalBets + 1,
     }).where(eq(markets.id, marketId));
 
-    // Save bet with tx hash
     const bet = await db.insert(bets).values({
       marketId, userId, outcome: oc, amount: amt.toFixed(6), txHash: txHash || null,
     }).returning();
 
-    // NOTE: GenLayer on-chain recording (glCreateMarket, glRecordBet) is intentionally
-    // skipped here. On Vercel serverless, fire-and-forget promises get killed after
-    // the response is sent. The /api/resolve endpoint handles on-chain creation
-    // when the market needs to be resolved.
-
-    // Return updated odds
     const updated = await db.select().from(markets).where(eq(markets.id, marketId)).limit(1);
     const mp = updated[0];
     const t = Number(mp.totalPool);
@@ -93,7 +79,8 @@ export async function POST(req: Request) {
       },
     });
   } catch (e) {
-    console.error("POST /api/bets error:", e);
-    return Response.json({ error: "Internal server error" }, { status: 500 });
+    const msg = (e as Error).message || "Unknown error";
+    console.error("POST /api/bets error:", msg);
+    return Response.json({ error: msg }, { status: 500 });
   }
 }

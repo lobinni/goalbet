@@ -1,10 +1,13 @@
 import { db } from "@/db";
 import { users } from "@/db/schema";
+import { ensureTables } from "@/db/ensure-tables";
 import { desc, sql } from "drizzle-orm";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
+    await ensureTables();
+
     const rows = await db.select({
       address: users.walletAddress,
       totalWon: users.totalWon, totalStaked: users.totalStaked,
@@ -20,7 +23,8 @@ export async function GET() {
       })),
     });
   } catch (e) {
-    console.error("GET /api/leaderboard error:", e);
+    const msg = (e as Error).message || "Unknown error";
+    console.error("GET /api/leaderboard error:", msg);
     return Response.json({ leaderboard: [] }, { status: 500 });
   }
 }

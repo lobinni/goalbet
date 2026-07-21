@@ -291,16 +291,23 @@ export default function GoalBetApp({ initialGroups }: Props) {
   useEffect(()=>{
     if(!account) return;
     let c = false;
+    const fallbackUser = ():AppUser => ({id:"",walletAddress:account,totalBets:0,totalStaked:"0",totalWon:"0",wins:0,losses:0});
     (async()=>{
       try {
         const r1 = await fetch(`/api/users/me?wallet=${account.toLowerCase()}`);
-        const { data: d1 } = await safeJson(r1);
-        if(!c && d1.user) { setUser(d1.user as AppUser); return; }
+        const { ok: ok1, data: d1 } = await safeJson(r1);
+        if(!c && ok1 && d1.user) { setUser(d1.user as AppUser); return; }
+        // If /me returned 500 (db error), still try register but don't block UI
         const r2 = await fetch("/api/users/register",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({walletAddress:account})});
-        const { data: d2 } = await safeJson(r2);
-        if(!c && d2.user) { setUser(d2.user as AppUser); notify("Welcome to the pitch! ⚽","ok"); }
+        const { ok: ok2, data: d2 } = await safeJson(r2);
+        if(!c && ok2 && d2.user) { setUser(d2.user as AppUser); notify("Welcome to the pitch! ⚽","ok"); }
+        else if(!c) {
+          // DB might be down — let user browse with a local-only session
+          setUser(fallbackUser());
+          if(!ok1 || !ok2) notify("Server connection issue — some features may be limited","err");
+        }
       } catch {
-        if(!c) setUser({id:"",walletAddress:account,totalBets:0,totalStaked:"0",totalWon:"0",wins:0,losses:0});
+        if(!c) { setUser(fallbackUser()); notify("Server connection issue — browsing in offline mode","err"); }
       }
     })();
     return ()=>{ c=true; };
@@ -326,12 +333,18 @@ export default function GoalBetApp({ initialGroups }: Props) {
   // ── fixtures + markets ──
   const fetchMatches = useCallback(async()=>{
     setMatchesLoading(true);
+    // Fixtures (ESPN — no DB) and Markets (DB) are independent
+    // If DB is down, fixtures still load fine
     try {
-      const [fr,mr] = await Promise.all([fetch("/api/fixtures"),fetch("/api/markets")]);
-      const { data: fd } = await safeJson(fr); const { data: md } = await safeJson(mr);
+      const fr = await fetch("/api/fixtures");
+      const { data: fd } = await safeJson(fr);
       if(fd.groups) setFixtureGroups(fd.groups as FixtureGroup[]);
-      if(md.markets) { const c:Record<string,MarketRow>={}; for(const m of md.markets as MarketRow[]) c[m.id]=m; setMarketsCache(p=>({...p,...c})); }
-    } catch { /* keep current state */ }
+    } catch { /* keep current fixtures */ }
+    try {
+      const mr = await fetch("/api/markets");
+      const { ok, data: md } = await safeJson(mr);
+      if(ok && md.markets) { const c:Record<string,MarketRow>={}; for(const m of md.markets as MarketRow[]) c[m.id]=m; setMarketsCache(p=>({...p,...c})); }
+    } catch { /* keep current markets cache */ }
     setMatchesLoading(false);
   },[]);
   useEffect(()=>{ fetchMatches(); },[fetchMatches]);
@@ -404,14 +417,14 @@ export default function GoalBetApp({ initialGroups }: Props) {
     return ()=>{ cancelled = true; };
   },[matches, marketsCache, myBets, user]);
 
-  const getMarketForMatch = async(m:Match) => {
+  const getMarketForMatch = async(m:Match): Promise<{ market: MarketRow | null; error?: string }> => {
     const id = mkid(m);
-    if(marketsCache[id]) return marketsCache[id];
+    if(marketsCache[id]) return { market: marketsCache[id] };
     const r = await fetch("/api/markets",{method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({id,gameDate:m.gameDate,team1:m.team1,team2:m.team2,team1Code:m.team1Code,team2Code:m.team2Code,league:m.league,kickoffTime:m.kickoffTime})});
-    const { data: d } = await safeJson(r);
-    if(d.market) { setMarketsCache(p=>({...p,[id]:d.market as MarketRow})); return d.market as MarketRow; }
-    return null;
+    const { ok, data: d } = await safeJson(r);
+    if(ok && d.market) { setMarketsCache(p=>({...p,[id]:d.market as MarketRow})); return { market: d.market as MarketRow }; }
+    return { market: null, error: String(d.error || `Server error (${r.status})`) };
   };
 
   // ── place bet: USDC transfer → pool wallet → record bet ──
@@ -422,8 +435,8 @@ export default function GoalBetApp({ initialGroups }: Props) {
     if(amt>Number(usdcBalance)) return notify(`Insufficient USDC (have ${usdcBalance})`,"err");
     setLoading(true);
     try {
-      const mkt = await getMarketForMatch(betModal.match);
-      if(!mkt) throw new Error("Could not create market");
+      const { market: mkt, error: mktErr } = await getMarketForMatch(betModal.match);
+      if(!mkt) throw new Error(mktErr || "Could not create market — check /api/health");
 
       // Step 1: Send USDC from user wallet → pool wallet
       notify("Confirm the USDC transfer in MetaMask…","info");
@@ -610,7 +623,7 @@ export default function GoalBetApp({ initialGroups }: Props) {
                         {ubets.length} slip{ubets.length>1?"s":""} on this match — verify the result to settle.
                       </p>
                       <button
-                        onClick={async () => { await getMarketForMatch(m); resolveMarket(mid); }}
+                        onClick={async () => { await getMarketForMatch(m).catch(()=>{}); resolveMarket(mid); }}
                         disabled={resolving === mid}
                         className="btn-gold px-6 py-2.5 text-xs anim-glow"
                       >

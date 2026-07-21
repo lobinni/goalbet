@@ -1,11 +1,13 @@
 import { db } from "@/db";
 import { bets, markets, users } from "@/db/schema";
+import { ensureTables } from "@/db/ensure-tables";
 import { eq } from "drizzle-orm";
 export const dynamic = "force-dynamic";
 
-/** Claim winnings — calculates payout, marks claimed */
 export async function POST(req: Request) {
   try {
+    await ensureTables();
+
     const body = await req.json().catch(() => null);
     if (!body) return Response.json({ error: "Invalid request body" }, { status: 400 });
 
@@ -37,7 +39,6 @@ export async function POST(req: Request) {
       isWon, payout: payout.toFixed(6), claimed: true, claimedAt: new Date(),
     }).where(eq(bets.id, betId));
 
-    // Update user stats
     const u = await db.select().from(users).where(eq(users.id, userId)).limit(1);
     if (u.length) {
       if (isWon) {
@@ -52,7 +53,8 @@ export async function POST(req: Request) {
 
     return Response.json({ success: true, isWon, payout: payout.toFixed(6) });
   } catch (e) {
-    console.error("POST /api/bets/claim error:", e);
-    return Response.json({ error: "Internal server error" }, { status: 500 });
+    const msg = (e as Error).message || "Unknown error";
+    console.error("POST /api/bets/claim error:", msg);
+    return Response.json({ error: msg }, { status: 500 });
   }
 }

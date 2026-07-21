@@ -1,5 +1,6 @@
 import { db } from "@/db";
 import { markets } from "@/db/schema";
+import { ensureTables } from "@/db/ensure-tables";
 import { eq } from "drizzle-orm";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -20,6 +21,7 @@ export async function POST(req: Request) {
     const { marketId, fast } = body;
     if (!marketId) return Response.json({ error: "marketId required" }, { status: 400 });
 
+    await ensureTables();
     const rows = await db.select().from(markets).where(eq(markets.id, marketId)).limit(1);
     if (!rows.length) return Response.json({ error: "Market not found" }, { status: 404 });
     const market = rows[0];

@@ -1,10 +1,13 @@
 import { db } from "@/db";
 import { users } from "@/db/schema";
+import { ensureTables } from "@/db/ensure-tables";
 import { eq } from "drizzle-orm";
 export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
   try {
+    await ensureTables();
+
     const body = await req.json().catch(() => null);
     if (!body) return Response.json({ error: "Invalid request body" }, { status: 400 });
 
@@ -21,7 +24,8 @@ export async function POST(req: Request) {
     }).returning();
     return Response.json({ user: row[0] });
   } catch (e) {
-    console.error("POST /api/users/register error:", e);
-    return Response.json({ error: "Internal server error" }, { status: 500 });
+    const msg = (e as Error).message || "Unknown error";
+    console.error("POST /api/users/register error:", msg);
+    return Response.json({ error: msg }, { status: 500 });
   }
 }
