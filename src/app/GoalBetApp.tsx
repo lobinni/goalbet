@@ -2,9 +2,10 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import TeamLogo from "@/components/TeamLogo";
 import {
-  type Match, groupMatchesByDate, formatDateHeader,
+  type Match, formatDateHeader,
   formatKickoffTime, relativeDayLabel, LEAGUE_INFO,
 } from "@/lib/matches";
+import type { FixtureGroup, LeagueGroup } from "@/lib/fixtures";
 import {
   getEthereum, shortenAddress,
   BASE_SEPOLIA, CONTRACT_ADDRESS, EXPLORER_TX,
@@ -139,7 +140,7 @@ function Wordmark() {
 }
 
 interface Props {
-  initialMatches: Match[];
+  initialGroups: FixtureGroup[];
 }
 
 // ─── types ──────────────────────────────────────────────────
@@ -170,12 +171,74 @@ const ODDS_META = [
   { l: "AWAY", oc: 2, stripe: "var(--color-awayc)", txt: "text-awayc" },
 ] as const;
 
-export default function GoalBetApp({ initialMatches }: Props) {
+/** ESPN-style league section — logo + name + grouped matches */
+function LeagueSection({
+  group,
+  matches: groupMatches,
+  renderCard,
+}: {
+  group: LeagueGroup;
+  matches: Match[];
+  renderCard: (m: Match, i: number) => React.ReactNode;
+}) {
+  // Sub-group by date within a league
+  const byDate = new Map<string, Match[]>();
+  for (const m of groupMatches) {
+    const arr = byDate.get(m.gameDate) || [];
+    arr.push(m);
+    byDate.set(m.gameDate, arr);
+  }
+
+  const li = LEAGUE_INFO[group.name];
+
+  return (
+    <div className="anim-rise">
+      {/* league header */}
+      <div className="flex items-center gap-3 mb-3 px-1">
+        {group.logo ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={group.logo} alt="" className="w-6 h-6 object-contain shrink-0" />
+        ) : li ? (
+          <span className="text-lg shrink-0">{li.emoji}</span>
+        ) : (
+          <span className="text-lg shrink-0">⚽</span>
+        )}
+        <span className="font-semibold text-sm text-chalk tracking-wide truncate">{group.name}</span>
+        <span className="h-px flex-1 bg-line" />
+        <span className="font-mono text-[10px] text-sage tracking-widest shrink-0">
+          {groupMatches.length} MATCH{groupMatches.length > 1 ? "ES" : ""}
+        </span>
+      </div>
+      {/* date sub-sections */}
+      {Array.from(byDate.entries()).map(([date, dayMatches]) => {
+        const rel = relativeDayLabel(date);
+        return (
+          <div key={date} className="mb-4">
+            <div className="flex items-center gap-2 mb-2 px-1">
+              <span className="font-mono text-[10px] text-sage tracking-widest">{formatDateHeader(date)}</span>
+              {rel && (
+                <span className={`stamp ${rel === "TODAY" ? "text-gold" : rel === "YESTERDAY" ? "text-win" : "text-awayc"}`}>
+                  {rel}
+                </span>
+              )}
+            </div>
+            <div className="grid gap-3">
+              {dayMatches.map((m, i) => renderCard(m, i))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+export default function GoalBetApp({ initialGroups }: Props) {
   const [account, setAccount] = useState<string | null>(null);
   const [user, setUser] = useState<AppUser | null>(null);
   const [usdcBalance, setUsdcBalance] = useState("0.00");
 
-  const [matches, setMatches] = useState<Match[]>(initialMatches);
+  const [fixtureGroups, setFixtureGroups] = useState<FixtureGroup[]>(initialGroups);
+  const matches = fixtureGroups.flatMap(g => g.matches);
   const [matchesLoading, setMatchesLoading] = useState(false);
   const [myBets, setMyBets] = useState<BetRow[]>([]);
   const [marketsCache, setMarketsCache] = useState<Record<string, MarketRow>>({});
@@ -266,7 +329,7 @@ export default function GoalBetApp({ initialMatches }: Props) {
     try {
       const [fr,mr] = await Promise.all([fetch("/api/fixtures"),fetch("/api/markets")]);
       const { data: fd } = await safeJson(fr); const { data: md } = await safeJson(mr);
-      if(fd.matches) setMatches(fd.matches as Match[]);
+      if(fd.groups) setFixtureGroups(fd.groups as FixtureGroup[]);
       if(md.markets) { const c:Record<string,MarketRow>={}; for(const m of md.markets as MarketRow[]) c[m.id]=m; setMarketsCache(p=>({...p,...c})); }
     } catch { /* keep current state */ }
     setMatchesLoading(false);
@@ -416,7 +479,6 @@ export default function GoalBetApp({ initialMatches }: Props) {
   };
 
   const hasBet = (m:Match) => myBets.some(b=>b.marketId===mkid(m));
-  const matchesByDate = groupMatchesByDate(matches);
 
   /* ═══════════════ MATCH CARD (shared shape for landing + board) ═══════════════ */
   const matchCard = (m: Match, connected: boolean, idx = 0) => {
@@ -729,26 +791,13 @@ export default function GoalBetApp({ initialMatches }: Props) {
         </div>
         {matchesLoading ? (
           <div className="panel p-10 text-center"><span className="text-4xl ball-spin">⚽</span><p className="text-sage mt-3 text-sm">Loading fixtures…</p></div>
-        ) : !matches.length ? (
+         ) : !fixtureGroups.length ? (
           <div className="panel p-10 text-center"><p className="text-sage text-sm">No matches on the board right now.</p></div>
         ) : (
-          <div className="space-y-7">
-            {Object.entries(matchesByDate).map(([date, dm])=>{
-              const rel = relativeDayLabel(date);
-              return (
-                <div key={date}>
-                  <div className="flex items-center gap-3 mb-3 flex-wrap">
-                    <span className="font-display uppercase text-xl text-gold tracking-wide">{formatDateHeader(date)}</span>
-                    {rel && <span className={`stamp ${rel==="TODAY"?"text-gold":rel==="YESTERDAY"?"text-win":"text-awayc"}`}>{rel}</span>}
-                    <span className="h-px flex-1 bg-line" />
-                    <span className="font-mono text-[10px] text-sage tracking-widest">{(dm as Match[]).length} MATCH{(dm as Match[]).length>1?"ES":""}</span>
-                  </div>
-                  <div className="grid gap-3">
-                    {(dm as Match[]).map((m, i) => matchCard(m, false, i))}
-                  </div>
-                </div>
-              );
-            })}
+          <div className="space-y-6">
+            {fixtureGroups.map((fg) => (
+              <LeagueSection key={fg.league.slug} group={fg.league} matches={fg.matches} renderCard={(m: Match, i: number) => matchCard(m, false, i)} />
+            ))}
           </div>
         )}
       </section>
@@ -824,26 +873,13 @@ export default function GoalBetApp({ initialMatches }: Props) {
               </div>
               <button onClick={fetchMatches} className="font-mono text-[11px] text-gold hover:underline tracking-widest">↻ REFRESH</button>
             </div>
-            {matchesLoading&&!matches.length ? (
+            {matchesLoading&&!fixtureGroups.length ? (
               <div className="panel p-10 text-center"><span className="text-4xl ball-spin inline-block">⚽</span><p className="text-sage mt-3 text-sm">Loading…</p></div>
-            ) : !matches.length ? (
+            ) : !fixtureGroups.length ? (
               <div className="panel p-10 text-center"><p className="text-sage text-sm">No matches</p></div>
-            ) : Object.entries(matchesByDate).map(([date,dm])=>{
-              const rel = relativeDayLabel(date);
-              return (
-                <div key={date}>
-                  <div className="flex items-center gap-3 mb-3 flex-wrap">
-                    <span className="font-display uppercase text-xl text-gold tracking-wide">{formatDateHeader(date)}</span>
-                    {rel && <span className={`stamp ${rel==="TODAY"?"text-gold":rel==="YESTERDAY"?"text-win":"text-awayc"}`}>{rel}</span>}
-                    <span className="h-px flex-1 bg-line" />
-                    <span className="font-mono text-[10px] text-sage tracking-widest">{(dm as Match[]).length} MATCH{(dm as Match[]).length>1?"ES":""}</span>
-                  </div>
-                  <div className="grid gap-3">
-                    {(dm as Match[]).map((m, i)=>matchCard(m, true, i))}
-                  </div>
-                </div>
-              );
-            })}
+            ) : fixtureGroups.map((fg) => (
+              <LeagueSection key={fg.league.slug} group={fg.league} matches={fg.matches} renderCard={(m: Match, i: number) => matchCard(m, true, i)} />
+            ))}
           </div>
         )}
 

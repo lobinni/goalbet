@@ -1,8 +1,8 @@
 import type { Match } from "./matches";
 
 /* ── Odds (deterministic pool-style) ── */
-const T1 = new Set(["FRA","ESP","ARG","BRA","GER","ENG","POR","NED","BEL","ITA","MCI","LIV","ARS","CHE","RMA","FCB","BAY","PSG","BOCA","RIV","FLA","PAL"]);
-const T2 = new Set(["URU","CRO","COL","USA","MEX","JPN","KOR","SEN","MAR","NOR","SUI","TOT","MUN","ATM","JUV","BVB","LAG","LAX","INT","CRUZ","Gremio"]);
+const T1 = new Set(["FRA","ESP","ARG","BRA","GER","ENG","POR","NED","BEL","ITA","MCI","LIV","ARS","CHE","RMA","FCB","BAY","PSG"]);
+const T2 = new Set(["URU","CRO","COL","USA","MEX","JPN","KOR","SEN","MAR","NOR","SUI","TOT","MUN","ATM","JUV","BVB"]);
 
 function odds(a: string, b: string): [number, number, number] {
   const s1 = T1.has(a) ? 3 : T2.has(a) ? 2 : 1, s2 = T1.has(b) ? 3 : T2.has(b) ? 2 : 1, d = s1 - s2;
@@ -14,74 +14,95 @@ function odds(a: string, b: string): [number, number, number] {
   return [+(5 + s).toFixed(2), +(4 + s * .5).toFixed(2), +(1.3 + s * .15).toFixed(2)];
 }
 
-function fmt(d: Date): string {
+function fmtDate(d: Date): string {
   return d.toISOString().split("T")[0].replace(/-/g, "");
 }
 
-
 /* ═══════════════════════════════════════════════════════════════
-   ESPN Public JSON API — no auth, structured, stable
-   Window: YESTERDAY → TOMORROW (UTC)
+   ESPN Public JSON API — all leagues, grouped
    ═══════════════════════════════════════════════════════════════ */
 
-const ESPN_LEAGUES: string[] = [
-  "fifa.world",                 // FIFA World Cup
-  "fifa.friendly",              // International friendlies
-  "eng.1",                      // Premier League
-  "eng.2",                      // Championship
-  "esp.1",                      // La Liga
-  "ger.1",                      // Bundesliga
-  "ita.1",                      // Serie A
-  "fra.1",                      // Ligue 1
-  "uefa.champions",             // Champions League
-  "uefa.europa",                // Europa League
-  "uefa.europa.conference",     // Conference League
-  "ned.1",                      // Eredivisie
-  "por.1",                      // Primeira Liga
-  "usa.1",                      // MLS
-  "mex.1",                      // Liga MX
-  "bra.1",                      // Brasileirão
-  "arg.1",                      // Liga Profesional
+const ESPN_SLUGS: string[] = [
+  // World / International
+  "fifa.world",
+  "fifa.friendly",
+  // Europe – top leagues
+  "eng.1", "eng.2",
+  "esp.1",
+  "ger.1",
+  "ita.1",
+  "fra.1",
+  "ned.1",
+  "por.1",
+  "sco.prem",
+  // Europe – continental
+  "uefa.champions",
+  "uefa.europa",
+  "uefa.europa.conference",
+  // Americas
+  "usa.1",
+  "mex.1",
+  "bra.1",
+  "arg.1",
+  "col.1",
+  "ecu.1",
+  "bol.1",
+  // Continental cups
+  "conmebol.libertadores",
+  "conmebol.sudamericana",
+  "concacaf.champions",
 ];
+
+/** Info about a league from ESPN, kept alongside each match */
+export interface LeagueGroup {
+  slug: string;
+  name: string;
+  logo: string;
+}
 
 interface EspnCompetitor {
   homeAway: string;
   score: string;
   winner: boolean;
-  team: {
-    abbreviation: string;
-    displayName: string;
-    name: string;
-  };
+  team: { abbreviation: string; displayName: string; name: string };
 }
 
-async function fetchEspnLeague(slug: string, range: string): Promise<Match[]> {
-  const out: Match[] = [];
+async function fetchEspnLeague(
+  slug: string,
+  range: string,
+): Promise<{ group: LeagueGroup; matches: Match[] }> {
+  const empty: { group: LeagueGroup; matches: Match[] } = {
+    group: { slug, name: slug, logo: "" },
+    matches: [],
+  };
   try {
     const url = `https://site.api.espn.com/apis/site/v2/sports/soccer/${slug}/scoreboard?dates=${range}&limit=300`;
     const res = await fetch(url, {
       signal: AbortSignal.timeout(9000),
-      headers: { "Accept": "application/json" },
+      headers: { Accept: "application/json" },
       next: { revalidate: 120 },
     });
-    if (!res.ok) return out;
+    if (!res.ok) return empty;
 
     const data = await res.json();
     const events = data?.events;
-    if (!Array.isArray(events)) return out;
+    if (!Array.isArray(events) || events.length === 0) return empty;
 
-    // Use ESPN's own league name (accurate + localized)
-    const leagueName: string = data?.leagues?.[0]?.name || slug.toUpperCase();
+    const leagueMeta = data?.leagues?.[0] || {};
+    const leagueName: string = leagueMeta.name || slug;
+    const leagueLogo: string =
+      leagueMeta.logos?.[0]?.href || "";
+
+    const group: LeagueGroup = { slug, name: leagueName, logo: leagueLogo };
+    const matches: Match[] = [];
 
     for (const event of events) {
       const comp = event?.competitions?.[0];
       if (!comp) continue;
-
       const competitors = comp?.competitors as EspnCompetitor[] | undefined;
       if (!Array.isArray(competitors) || competitors.length !== 2) continue;
-
-      const home = competitors.find(c => c.homeAway === "home");
-      const away = competitors.find(c => c.homeAway === "away");
+      const home = competitors.find((c) => c.homeAway === "home");
+      const away = competitors.find((c) => c.homeAway === "away");
       if (!home || !away) continue;
 
       const ko = new Date(event.date || comp.date || comp.startDate);
@@ -89,14 +110,11 @@ async function fetchEspnLeague(slug: string, range: string): Promise<Match[]> {
       const statusState = statusType?.state || "pre";
 
       let status: string;
-      if (statusType?.completed) {
-        status = "FINISHED";
-      } else if (statusState === "in") {
+      if (statusType?.completed) status = "FINISHED";
+      else if (statusState === "in") {
         const detail = statusType?.detail || "";
         status = detail.includes("Half") ? "PAUSED" : "IN_PLAY";
-      } else {
-        status = "SCHEDULED";
-      }
+      } else status = "SCHEDULED";
 
       const homeScore = parseInt(home.score) || 0;
       const awayScore = parseInt(away.score) || 0;
@@ -112,19 +130,20 @@ async function fetchEspnLeague(slug: string, range: string): Promise<Match[]> {
       let elapsed: number | null = null;
       if (status === "IN_PLAY") {
         const clockMatch = (statusType?.detail || "").match(/(\d+)'/);
-        if (clockMatch) elapsed = parseInt(clockMatch[1]);
-        else elapsed = Math.min(90, Math.floor((Date.now() - ko.getTime()) / 60000));
+        elapsed = clockMatch
+          ? parseInt(clockMatch[1])
+          : Math.min(90, Math.floor((Date.now() - ko.getTime()) / 60000));
       }
 
-      // League label + stage (e.g. "FIFA World Cup — Final")
       let leagueLabel = leagueName;
       const altNote: string = comp.altGameNote || "";
       if (altNote && altNote.includes(",")) {
         const round = altNote.split(",").pop()?.trim();
-        if (round && !leagueLabel.includes(round)) leagueLabel = `${leagueName} — ${round}`;
+        if (round && !leagueLabel.includes(round))
+          leagueLabel = `${leagueName} — ${round}`;
       }
 
-      out.push({
+      matches.push({
         id: `espn-${event.id}`,
         team1: home.team?.displayName || home.team?.name || "Home",
         team2: away.team?.displayName || away.team?.name || "Away",
@@ -145,123 +164,85 @@ async function fetchEspnLeague(slug: string, range: string): Promise<Match[]> {
         venue: comp.venue?.fullName || undefined,
       });
     }
+
+    return { group, matches };
   } catch (e) {
-    console.warn(`ESPN fetch failed for ${slug}:`, (e as Error).message?.slice(0, 80));
+    console.warn(`ESPN ${slug}:`, (e as Error).message?.slice(0, 80));
+    return empty;
   }
-  return out;
 }
 
-async function fetchEspnFixtures(): Promise<Match[]> {
-  // ESPN filters by US-local date, so widen the fetch window by one extra day
-  // and trim precisely to yesterday..tomorrow (UTC) in getAllFixtures below.
+/* ═══════════════════════════════════════════════════════════════
+   Public API: grouped fixture data
+   ═══════════════════════════════════════════════════════════════ */
+
+/** A league group with its matches, sorted by kickoff */
+export interface FixtureGroup {
+  league: LeagueGroup;
+  matches: Match[];
+}
+
+/** Get all fixtures grouped by league — yesterday → tomorrow UTC */
+export async function getAllFixtures(): Promise<Match[]> {
+  const groups = await getFixtureGroups();
+  return groups.flatMap((g) => g.matches);
+}
+
+export async function getFixtureGroups(): Promise<FixtureGroup[]> {
   const from = new Date();
   from.setDate(from.getDate() - 1);
   const to = new Date();
   to.setDate(to.getDate() + 2);
-  const range = `${fmt(from)}-${fmt(to)}`;
+  const range = `${fmtDate(from)}-${fmtDate(to)}`;
 
-  const perLeague = await Promise.all(ESPN_LEAGUES.map(slug => fetchEspnLeague(slug, range)));
-  return perLeague.flat();
-}
-
-
-/* ═══════════════════════════════════════════════════════════════
-   football-data.org (secondary source, requires API key)
-   ═══════════════════════════════════════════════════════════════ */
-
-interface FdMatch {
-  id: number; utcDate: string; status: string; matchday: number | null; venue: string | null;
-  homeTeam: { name: string; tla: string }; awayTeam: { name: string; tla: string };
-  competition: { name: string; code: string }; score: { fullTime: { home: number | null; away: number | null } };
-}
-
-async function fetchFootballData(): Promise<Match[]> {
-  const k = process.env.FOOTBALL_DATA_API_KEY;
-  if (!k) return [];
-
-  const from = new Date();
-  from.setDate(from.getDate() - 1);
-  const to = new Date();
-  to.setDate(to.getDate() + 1);
-  const h: HeadersInit = { "X-Auth-Token": k };
-  const out: Match[] = [];
-
-  for (const c of ["PL", "PD", "BL1", "SA", "FL1", "CL", "EC", "WC"]) {
-    try {
-      const r = await fetch(
-        `https://api.football-data.org/v4/competitions/${c}/matches?dateFrom=${from.toISOString().split("T")[0]}&dateTo=${to.toISOString().split("T")[0]}&status=SCHEDULED,TIMED,IN_PLAY,PAUSED,FINISHED`,
-        { headers: h, next: { revalidate: 120 } },
-      );
-      if (!r.ok) continue;
-      for (const m of ((await r.json()).matches || []) as FdMatch[]) {
-        const ko = new Date(m.utcDate);
-        const [o1, od, o2] = odds(m.homeTeam.tla || "", m.awayTeam.tla || "");
-        const sc = m.score?.fullTime?.home != null ? `${m.score.fullTime.home}-${m.score.fullTime.away}` : undefined;
-        const hh = ko.getUTCHours().toString().padStart(2, "0"), mm = ko.getUTCMinutes().toString().padStart(2, "0");
-        out.push({
-          id: `fd-${m.id}`,
-          team1: m.homeTeam.name, team2: m.awayTeam.name,
-          team1Code: m.homeTeam.tla || "", team2Code: m.awayTeam.tla || "",
-          league: m.competition.name, leagueCode: m.competition.code || c,
-          matchday: m.matchday,
-          gameDate: ko.toISOString().split("T")[0],
-          kickoffTime: ko.toISOString(), kickoffLocal: `${hh}:${mm} UTC`,
-          oddsTeam1: o1, oddsDraw: od, oddsTeam2: o2,
-          status: m.status, score: sc,
-          elapsed: m.status === "IN_PLAY" ? Math.min(90, Math.floor((Date.now() - ko.getTime()) / 60000)) : null,
-          venue: m.venue || undefined,
-        });
-      }
-    } catch { /* ignore */ }
-  }
-  return out;
-}
-
-
-/* ═══════════════════════════════════════════════════════════════
-   Dedup + combine + sort (yesterday → tomorrow, live first)
-   ═══════════════════════════════════════════════════════════════ */
-
-function norm(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9]/g, "");
-}
-
-function dedup(matches: Match[]): Match[] {
-  const seen = new Map<string, Match>();
-  for (const m of matches) {
-    const k = `${m.gameDate}_${norm(m.team1)}_${norm(m.team2)}`;
-    const ex = seen.get(k);
-    if (!ex) { seen.set(k, m); continue; }
-    if (m.id.startsWith("espn-")) seen.set(k, m);
-    else if (m.score && !ex.score) seen.set(k, m);
-  }
-  return Array.from(seen.values());
-}
-
-/** Get all fixtures — yesterday's results, today's board, tomorrow's schedule */
-export async function getAllFixtures(): Promise<Match[]> {
-  const [espn, fd] = await Promise.all([
-    fetchEspnFixtures().catch(() => []),
-    fetchFootballData().catch(() => []),
-  ]);
+  const results = await Promise.all(
+    ESPN_SLUGS.map((slug) => fetchEspnLeague(slug, range)),
+  );
 
   // Precise UTC window: yesterday → tomorrow
-  const y = new Date(); y.setDate(y.getDate() - 1);
-  const t = new Date(); t.setDate(t.getDate() + 1);
+  const y = new Date();
+  y.setDate(y.getDate() - 1);
+  const t = new Date();
+  t.setDate(t.getDate() + 1);
   const fromIso = y.toISOString().split("T")[0];
   const toIso = t.toISOString().split("T")[0];
-  const all = dedup([...espn, ...fd]).filter(m => m.gameDate >= fromIso && m.gameDate <= toIso);
 
-  all.sort((a, b) => {
-    // 1. Date sections: yesterday → today → tomorrow
-    if (a.gameDate !== b.gameDate) return a.gameDate < b.gameDate ? -1 : 1;
-    // 2. Within a day: live matches first
-    const al = a.status === "IN_PLAY" || a.status === "PAUSED" ? 0 : 1;
-    const bl = b.status === "IN_PLAY" || b.status === "PAUSED" ? 0 : 1;
-    if (al !== bl) return al - bl;
-    // 3. Then by kickoff
-    return new Date(a.kickoffTime).getTime() - new Date(b.kickoffTime).getTime();
+  const groups: FixtureGroup[] = [];
+
+  for (const { group, matches } of results) {
+    const filtered = matches.filter(
+      (m) => m.gameDate >= fromIso && m.gameDate <= toIso,
+    );
+    if (filtered.length === 0) continue;
+
+    // Sort within league: live first, then by kickoff
+    filtered.sort((a, b) => {
+      const al = a.status === "IN_PLAY" || a.status === "PAUSED" ? 0 : 1;
+      const bl = b.status === "IN_PLAY" || b.status === "PAUSED" ? 0 : 1;
+      if (al !== bl) return al - bl;
+      return (
+        new Date(a.kickoffTime).getTime() - new Date(b.kickoffTime).getTime()
+      );
+    });
+
+    groups.push({ league: group, matches: filtered });
+  }
+
+  // Sort groups: leagues with live matches first, then alphabetical
+  groups.sort((a, b) => {
+    const aLive = a.matches.some(
+      (m) => m.status === "IN_PLAY" || m.status === "PAUSED",
+    )
+      ? 0
+      : 1;
+    const bLive = b.matches.some(
+      (m) => m.status === "IN_PLAY" || m.status === "PAUSED",
+    )
+      ? 0
+      : 1;
+    if (aLive !== bLive) return aLive - bLive;
+    return a.league.name.localeCompare(b.league.name);
   });
 
-  return all;
+  return groups;
 }

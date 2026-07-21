@@ -1,9 +1,9 @@
 import GoalBetApp from "./GoalBetApp";
-import { getAllFixtures } from "@/lib/fixtures";
+import { getFixtureGroups } from "@/lib/fixtures";
 
 export const dynamic = "force-dynamic";
 
 export default async function Page() {
-  const matches = await getAllFixtures();
-  return <GoalBetApp initialMatches={matches} />;
+  const groups = await getFixtureGroups();
+  return <GoalBetApp initialGroups={groups} />;
 }
