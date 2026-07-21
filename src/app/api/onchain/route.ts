@@ -4,7 +4,7 @@ export const dynamic = "force-dynamic";
 /** GET /api/onchain — read on-chain state from GenLayer V2 contract */
 export async function GET() {
   try {
-    const [stats, markets] = await Promise.all([
+    const [stats, onchainMarkets] = await Promise.all([
       glGetStats().catch(() => null),
       glGetAllMarkets().catch(() => []),
     ]);
@@ -13,7 +13,7 @@ export async function GET() {
       contract: CONTRACT_ADDRESS,
       explorer: EXPLORER_ADDR + CONTRACT_ADDRESS,
       stats,
-      markets,
+      markets: onchainMarkets,
     });
   } catch (err) {
     return Response.json({

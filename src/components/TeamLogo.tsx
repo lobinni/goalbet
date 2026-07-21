@@ -41,15 +41,10 @@ export default function TeamLogo({
   }
 
   const flag = getFlag(teamCode);
-  const emojiSize =
-    size === "lg" ? "text-4xl" : size === "md" ? "text-3xl" : "text-2xl";
+  const emojiSize = size === "lg" ? "text-4xl" : size === "md" ? "text-3xl" : "text-2xl";
 
   return (
-    <span
-      className={`${sizeClass} flex items-center justify-center ${emojiSize} ${className}`}
-      role="img"
-      aria-label={teamName}
-    >
+    <span className={`${sizeClass} flex items-center justify-center ${emojiSize} ${className}`}>
       {flag}
     </span>
   );

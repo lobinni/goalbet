@@ -1,17 +1,15 @@
 import type { Metadata } from "next";
-import type { ReactNode } from "react";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "GoalBet - On-Chain Football Betting",
-  description: "Bet GEN tokens on real football matches with AI Oracle resolution",
+  title: "GoalBet — AI Football Prediction Market",
+  description: "Decentralized football prediction market powered by GenLayer AI Oracle and USDC on Base Sepolia",
 };
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body className="antialiased">{children}</body>
+      <body>{children}</body>
     </html>
   );
 }
-

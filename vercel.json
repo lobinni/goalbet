@@ -4,7 +4,7 @@
   "installCommand": "npm install",
   "functions": {
     "src/app/api/resolve/route.ts": {
-      "maxDuration": 300
+      "maxDuration": 60
     }
   }
 }
